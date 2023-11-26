@@ -72,7 +72,7 @@ model:
       weight_norm: true
     finite_difference_eps: progressive
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 16
     use_distortion: false
@@ -137,19 +137,19 @@ model:
 system:
   name: neus-system
   loss:
-    lambda_rgb_mse: 1. # 10.
-    lambda_rgb_l1: 1. # 0.
+    lambda_rgb_mse: 1.
+    lambda_rgb_l1: 1.
     lambda_mask: 0.0
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
-    lambda_curvature: 0. # 5e-4 # topology warmup
+    lambda_curvature: 5e-4 # topology warmup
     curvature_warmup_steps: ${model.geometry.xyz_encoding_config.update_steps}
     lambda_sparsity: 0.0
     sparsity_scale: 1.
-    lambda_distortion: 1e-4
+    lambda_distortion: 0. # 1e-4
     lambda_distortion_bg: 0.0
-    lambda_opaque: 1e-2
-    lambda_entropy: 1e-4
+    lambda_opaque: 0. # 1e-2
+    lambda_entropy: 0. # 1e-4
     lambda_surface_bias: 0.0 # [5e3, 0.0, 0.1, 2e5] # refer to D-NeuS
   optimizer:
     name: AdamW
@@ -196,7 +196,7 @@ trainer:
   max_steps: 1e5
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5e3
+  val_check_interval: 1e4
   limit_train_batches: 1.0
   limit_val_batches: 4
   enable_progress_bar: true 

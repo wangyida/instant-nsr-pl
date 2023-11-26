@@ -1,4 +1,4 @@
-name: neus-hmvs-${basename:${dataset.root_dir}}
+name: na-hmvs-${basename:${dataset.root_dir}}
 tag: ""
 seed: 42
 
@@ -23,7 +23,7 @@ model:
   radius: 1.0 # set it to be real world scale e.g. 10 if scenes are not normalized
   num_samples_per_ray: 4096 # fewer than 1024 fails to learn SDF, although rendering is fine
   train_num_rays: 256
-  max_train_num_rays: 4096
+  max_train_num_rays: 8192
   grid_prune: true
   grid_prune_occ_thre: 0.001
   dynamic_ray_sampling: true
@@ -91,7 +91,7 @@ model:
     max_imgs: ${dataset.max_imgs}
     use_appearance_embedding: true
     use_average_appearance_embedding: ture
-    appearance_embedding_dim: 8
+    appearance_embedding_dim: 32
   # background model configurations
   num_samples_per_ray_bg: 256
   geometry_bg:
@@ -130,7 +130,7 @@ model:
     max_imgs: ${dataset.max_imgs}
     use_appearance_embedding: true
     use_average_appearance_embedding: ture
-    appearance_embedding_dim: 8
+    appearance_embedding_dim: 32
 
 system:
   name: neus-system
@@ -139,15 +139,15 @@ system:
     lambda_rgb_l1: 1.
     lambda_mask: 0.0
     lambda_eikonal: 0.1 # [0, 0.01, 0.1, 2e5]
-    lambda_adaptive: 1e-6 # 1e-3
-    lambda_curvature: 5e-4 # topology warmup
+    lambda_adaptive: 1e-6
+    lambda_curvature: 0.0 # 5e-4 # topology warmup
     curvature_warmup_steps: ${model.geometry.xyz_encoding_config.update_steps}
     lambda_sparsity: 0.0
     sparsity_scale: 1.
-    lambda_distortion: 0.0
+    lambda_distortion: 1e-4
     lambda_distortion_bg: 0.0
-    lambda_opaque: 1e-2 # 0.0
-    lambda_entropy: 0.0
+    lambda_opaque: 1e-2
+    lambda_entropy: 1e-4
     lambda_surface_bias: 0. # refer to D-NeuS
   optimizer:
     name: AdamW

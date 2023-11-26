@@ -10,10 +10,11 @@ dataset:
   #   - 800
   #   - 800
   img_downscale: 1 # specify training image size by either img_wh or img_downscale
-  cam_downscale: false
+  cam_downscale: 1 # false
   near_plane: 2.0
   far_plane: 6.0
-  apply_mask: false
+  apply_mask: true
+  load_data_on_gpu: false
   train_split: 'train'
   val_split: 'val'
   test_split: 'test'
@@ -77,12 +78,13 @@ model:
     max_imgs: ${dataset.max_imgs}
     use_appearance_embedding: false
     use_average_appearance_embedding: ture
-    appearance_embedding_dim: 32
+    appearance_embedding_dim: 16
   
 system:
   name: nerf-system
   loss:
     lambda_rgb: 1.
+    lambda_mask: 0.1
     lambda_distortion: 0.
   optimizer:
     name: AdamW
@@ -106,12 +108,12 @@ export:
   export_vertex_color: False  
 
 trainer:
-  max_steps: 20000
-  log_every_n_steps: 200
+  max_steps: 2e4
+  log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5000
+  val_check_interval: 5e3
   limit_train_batches: 1.0
-  limit_val_batches: 2
+  limit_val_batches: 4
   enable_progress_bar: true 
   precision: 16
 

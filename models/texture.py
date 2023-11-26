@@ -25,7 +25,7 @@ class VolumeRadiance(nn.Module):
 
 
     
-    def forward(self, features, dirs, camera_indices, ray_indices, *args):
+    def forward(self, features, dirs, camera_indices=None, ray_indices=None, *args):
         dirs = (dirs + 1.) / 2. # (-1, 1) => (0, 1)
         dirs_embd = self.encoding(dirs.view(-1, self.n_dir_dims))
 
@@ -34,7 +34,7 @@ class VolumeRadiance(nn.Module):
             if self.training:
                 assert camera_indices is not None, "Camera indices should be given during training when appearance embedding is used"
                 appe_embd = self.embedding_appearance(camera_indices[ray_indices])
-            elif camera_indices.nelement() > 0:
+            elif camera_indices is not None and camera_indices.nelement() > 0:
                 appe_embd = self.embedding_appearance(camera_indices).repeat(features.size()[0], 1)
             else:
                 appe_embd = self.embedding_appearance.mean(dim=0).repeat(features.size()[0], 1)

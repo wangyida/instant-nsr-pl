@@ -9,7 +9,7 @@ dataset:
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_exported_path: false
   img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically
+  cam_downscale: 80 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: camera # z-axis # camera/ground/z-axis 
   center_est_method: point # camera/point
