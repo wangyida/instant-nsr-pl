@@ -123,8 +123,9 @@ class BlenderDatasetBase():
         else:
             # auto-scale with camera positions
             scale = self.all_c2w[...,3].norm(p=2, dim=-1).min()
-            print('auto-scaled by: ', scale)
-        self.all_c2w[...,3] /= scale
+            print('Auto-scaled by: ', scale)
+        if self.split is not 'val':
+            self.all_c2w[...,3] /= scale
         
 
 class BlenderDataset(Dataset, BlenderDatasetBase):

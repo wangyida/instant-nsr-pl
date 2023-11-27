@@ -120,15 +120,6 @@ def normalize_poses(poses, pts, up_est_method, center_est_method, cam_downscale=
             poses_norm[:,2] *= -1
             pts = pts[:,[1,0,2]]
             pts[:,2] *= -1
-
-        # rescaling
-        if cam_downscale:
-            scale = cam_downscale
-        else:
-            # auto-scale with camera positions
-            scale = poses_norm[...,3].norm(p=2, dim=-1).min()
-        poses_norm[...,3] /= scale
-        pts = pts / scale
     else:
         # rotation and translation
         tc = center.reshape(3, 1)
@@ -147,15 +138,15 @@ def normalize_poses(poses, pts, up_est_method, center_est_method, cam_downscale=
             pts = pts[:,[1,0,2]]
             pts[:,2] *= -1
 
-        # rescaling
-        if cam_downscale:
-            scale = cam_downscale
-        else:
-            # auto-scale with camera positions
-            scale = poses_norm[...,3].norm(p=2, dim=-1).min()
-            print('auto-scaled by: ', scale)
-        poses_norm[...,3] /= scale
-        pts = pts / scale
+    # rescaling
+    if cam_downscale:
+        scale = cam_downscale
+    else:
+        # auto-scale with camera positions
+        scale = poses_norm[...,3].norm(p=2, dim=-1).min()
+        print('Auto-scaled by: ', scale)
+    poses_norm[...,3] /= scale
+    pts = pts / scale
 
     return poses_norm, pts
 
