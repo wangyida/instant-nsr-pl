@@ -14,6 +14,7 @@ dataset:
   near_plane: 2.0
   far_plane: 6.0
   apply_mask: false
+  apply_depth: true
   load_data_on_gpu: false
   train_split: 'train'
   val_split: 'val'
@@ -139,17 +140,18 @@ system:
   loss:
     lambda_rgb_mse: 1.
     lambda_rgb_l1: 1.
+    lambda_rgb_cos: 0.
     lambda_mask: 0.0
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
-    lambda_curvature: 5e-4 # topology warmup
+    lambda_curvature: 0.0 # 5e-4 # topology warmup
     curvature_warmup_steps: ${model.geometry.xyz_encoding_config.update_steps}
     lambda_sparsity: 0.0
     sparsity_scale: 1.
-    lambda_distortion: 0. # 1e-4
+    lambda_distortion: 1e-4
     lambda_distortion_bg: 0.0
-    lambda_opaque: 0. # 1e-2
-    lambda_entropy: 0. # 1e-4
+    lambda_opaque: 1e-2
+    lambda_entropy: 1e-4
     lambda_surface_bias: 0.0 # [5e3, 0.0, 0.1, 2e5] # refer to D-NeuS
   optimizer:
     name: AdamW

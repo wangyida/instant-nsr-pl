@@ -55,6 +55,7 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
+            depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -64,6 +65,7 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
+            depth = self.dataset.all_depths[index].view(-1).to(self.rank)
 
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -84,6 +86,7 @@ class NeuSSystem(BaseSystem):
             'rays': rays,
             'rgb': rgb,
             'fg_mask': fg_mask,
+            'depth': depth,
             'camera_indices': index
         })      
     
@@ -103,7 +106,15 @@ class NeuSSystem(BaseSystem):
 
         loss_rgb_l1 = F.l1_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
         self.log('train/loss_rgb', loss_rgb_l1)
-        loss += loss_rgb_l1 * self.C(self.config.system.loss.lambda_rgb_l1)        
+        loss += loss_rgb_l1 * self.C(self.config.system.loss.lambda_rgb_l1)
+
+        loss_rgb_cos = torch.mean(1.0 - F.cosine_similarity(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]], dim=-1))
+        self.log('train/loss_rgb_cos', loss_rgb_cos)
+        loss += loss_rgb_cos * self.C(self.config.system.loss.lambda_rgb_cos)
+
+        loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']], batch['depth'][out['rays_valid_full'][...,0]])
+        self.log('train/loss_depth_l1', loss_depth_l1)
+        loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_rgb_mse)
 
         if self.C(self.config.system.loss.lambda_adaptive) > 0.0 and self.C(self.config.system.loss.lambda_adaptive) < 1.0:
             with torch.no_grad():

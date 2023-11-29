@@ -22,6 +22,7 @@ class BlenderDatasetBase():
         self.rank = get_rank()
 
         self.apply_mask = self.config.apply_mask
+        self.apply_depth = self.config.apply_depth
 
         with open(os.path.join(self.config.root_dir, f"transforms_{self.split}.json"), 'r') as f:
             meta = json.load(f)
@@ -68,7 +69,7 @@ class BlenderDatasetBase():
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).cpu() # (h, w, 3)
 
-        self.all_c2w, self.all_images, self.all_fg_masks = [], [], []
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths = [], [], [], []
 
         for i, frame in enumerate(meta['frames']):
             c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
@@ -107,10 +108,16 @@ class BlenderDatasetBase():
                 self.all_fg_masks.append(torch.ones_like(img[...,0], device=img.device)) # (h, w)
             self.all_images.append(img[...,:3])
 
-        self.all_c2w, self.all_images, self.all_fg_masks = \
+            if self.apply_depth:
+                depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
+                depth = torch.load(depth_path)
+                self.all_depths.append(depth[...,3])
+
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \
             torch.stack(self.all_images, dim=0).float(), \
-            torch.stack(self.all_fg_masks, dim=0).float()
+            torch.stack(self.all_fg_masks, dim=0).float(), \
+            torch.stack(self.all_depths, dim=0).float()
 
         # translate
         # self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
@@ -124,7 +131,7 @@ class BlenderDatasetBase():
             # auto-scale with camera positions
             scale = self.all_c2w[...,3].norm(p=2, dim=-1).min()
             print('Auto-scaled by: ', scale)
-        if self.split is not 'val':
+        if self.split != 'val':
             self.all_c2w[...,3] /= scale
         
 

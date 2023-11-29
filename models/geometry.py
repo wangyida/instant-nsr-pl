@@ -244,7 +244,6 @@ class VolumeSDF(BaseImplicitGeometry):
                         else:
                             network_inp_d = pts_embd_d
                         points_d_sdf = self.network(network_inp_d)[...,0].view(*points.shape[:-1], 6).float()
-                        # points_d_sdf = self.network(self.encoding(points_d.view(-1, 3)))[...,0].view(*points.shape[:-1], 6).float()
                         grad = 0.5 * (points_d_sdf[..., 0::2] - points_d_sdf[..., 1::2]) / eps  
 
                         if with_laplace:
