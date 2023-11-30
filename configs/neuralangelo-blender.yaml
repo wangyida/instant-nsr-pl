@@ -14,6 +14,7 @@ dataset:
   near_plane: 2.0
   far_plane: 6.0
   apply_mask: true
+  apply_depth: false
   load_data_on_gpu: false
   train_split: 'train'
   val_split: 'val'

@@ -14,11 +14,12 @@ dataset:
   near_plane: 2.0
   far_plane: 6.0
   apply_mask: false
+  apply_depth: false
   load_data_on_gpu: false
   train_split: 'train'
   val_split: 'val'
   test_split: 'test'
-  max_imgs: 100
+  max_imgs: 1500
 
 model:
   name: nerf
@@ -58,7 +59,7 @@ model:
       n_neurons: 64
       n_hidden_layers: 1
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true # false
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 16
     use_distortion: false

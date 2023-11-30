@@ -56,6 +56,7 @@ class NeuSSystem(BaseSystem):
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
             depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -66,6 +67,7 @@ class NeuSSystem(BaseSystem):
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
             depth = self.dataset.all_depths[index].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
 
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -87,6 +89,7 @@ class NeuSSystem(BaseSystem):
             'rgb': rgb,
             'fg_mask': fg_mask,
             'depth': depth,
+            'depth_mask': depth_mask,
             'camera_indices': index
         })      
     
@@ -112,9 +115,10 @@ class NeuSSystem(BaseSystem):
         self.log('train/loss_rgb_cos', loss_rgb_cos)
         loss += loss_rgb_cos * self.C(self.config.system.loss.lambda_rgb_cos)
 
-        loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']], batch['depth'][out['rays_valid_full'][...,0]])
-        self.log('train/loss_depth_l1', loss_depth_l1)
-        loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_rgb_mse)
+        if self.dataset.apply_depth:
+            loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']] * batch['depth_mask'][out['rays_valid_full'][...,0]], batch['depth'][out['rays_valid_full'][...,0]] * batch['depth_mask'][out['rays_valid_full'][...,0]])
+            self.log('train/loss_depth_l1', loss_depth_l1)
+            loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_rgb_mse)
 
         if self.C(self.config.system.loss.lambda_adaptive) > 0.0 and self.C(self.config.system.loss.lambda_adaptive) < 1.0:
             with torch.no_grad():
@@ -141,7 +145,8 @@ class NeuSSystem(BaseSystem):
         loss += loss_sparsity * self.C(self.config.system.loss.lambda_sparsity)
 
         if self.C(self.config.system.loss.lambda_surface_bias) > 0:
-            loss_bias = F.l1_loss(out['sdf_rendered'], torch.zeros_like(out['sdf_rendered']), reduction='mean')
+            # loss_bias = F.l1_loss(out['sdf_rendered'], torch.zeros_like(out['sdf_rendered']), reduction='mean')
+            loss_bias = F.l1_loss(out['depth'], torch.zeros_like(out['depth']), reduction='mean')
             loss += loss_bias * self.C(self.config.system.loss.lambda_surface_bias) 
         if self.C(self.config.system.loss.lambda_curvature) > 0:
             assert 'sdf_laplace_samples' in out, "Need geometry.grad_type='finite_difference' to get SDF Laplace samples"

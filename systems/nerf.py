@@ -53,6 +53,8 @@ class NeRFSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
+            depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -62,6 +64,8 @@ class NeRFSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
+            depth = self.dataset.all_depths[index].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
         
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -82,6 +86,8 @@ class NeRFSystem(BaseSystem):
             'rays': rays,
             'rgb': rgb,
             'fg_mask': fg_mask,
+            'depth': depth,
+            'depth_mask': depth_mask,
             'camera_indices': index
         })
     
@@ -98,6 +104,11 @@ class NeRFSystem(BaseSystem):
         loss_rgb = F.smooth_l1_loss(out['comp_rgb'][out['rays_valid'][...,0]], batch['rgb'][out['rays_valid'][...,0]])
         self.log('train/loss_rgb', loss_rgb)
         loss += loss_rgb * self.C(self.config.system.loss.lambda_rgb)
+
+        if self.dataset.apply_depth:
+            loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid']] * batch['depth_mask'][out['rays_valid'][...,0]], batch['depth'][out['rays_valid'][...,0]] * batch['depth_mask'][out['rays_valid'][...,0]])
+            self.log('train/loss_depth_l1', loss_depth_l1)
+            loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_rgb)
 
         # distortion loss proposed in MipNeRF360
         # an efficient implementation from https://github.com/sunset1995/torch_efficient_distloss, but still slows down training by ~30%

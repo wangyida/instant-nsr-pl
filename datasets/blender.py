@@ -69,7 +69,7 @@ class BlenderDatasetBase():
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).cpu() # (h, w, 3)
 
-        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths = [], [], [], []
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depths_mask = [], [], [], [], []
 
         for i, frame in enumerate(meta['frames']):
             c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
@@ -109,15 +109,28 @@ class BlenderDatasetBase():
             self.all_images.append(img[...,:3])
 
             if self.apply_depth:
-                depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
-                depth = torch.load(depth_path)
-                self.all_depths.append(depth[...,3])
+                # load estimated or recorded depth map
+                try:
+                    depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
+                    depth = torch.load(depth_path)[...,3]
+                    self.all_depths.append(depth)
+                    # load the depth mask which is used to determine specific ray to get applied with depth supervision
+                    depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
+                    depth_mask = (torch.load(depth_mask_path)[...] < 0).to(bool)
+                    self.all_depths_mask.append(depth_mask)
+                except:
+                    self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
+                    self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+            else:
+                self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
+                self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
 
-        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths = \
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depths_mask = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \
             torch.stack(self.all_images, dim=0).float(), \
             torch.stack(self.all_fg_masks, dim=0).float(), \
-            torch.stack(self.all_depths, dim=0).float()
+            torch.stack(self.all_depths, dim=0).float(), \
+            torch.stack(self.all_depths_mask, dim=0).float()
 
         # translate
         # self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
