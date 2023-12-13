@@ -215,9 +215,10 @@ class ColmapDatasetBase():
 
             mask_dir = os.path.join(self.config.root_dir, 'masks')
             has_mask = os.path.exists(mask_dir) # TODO: support partial masks
-            apply_mask = has_mask and self.config.apply_mask
+            self.apply_mask = has_mask and self.config.apply_mask
+            self.apply_depth = self.config.apply_depth
             
-            all_c2w, all_images, all_fg_masks = [], [], []
+            all_c2w, all_images, all_fg_masks, all_depths, all_depths_mask = [], [], [], [], []
 
             for i, d in enumerate(imdata.values()):
                 R = d.qvec2rotmat()
@@ -247,8 +248,33 @@ class ColmapDatasetBase():
                         mask = torch.ones_like(img[...,0], device=img.device)
                     all_fg_masks.append(mask) # (h, w)
                     all_images.append(img)
+                    if self.apply_depth:
+                        # load estimated or recorded depth map
+                        depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
+                        if os.path.isfile(depth_path):
+                            depth = torch.load(depth_path)[...,3]
+                            all_depths.append(depth)
+                        else:
+                            print(colored('skip, ', depth_path + 'does not exist', 'red'))
+                            all_depths.append(torch.zeros_like(img[...,0], device=img.device))
+                        # load the mask which is used to determine rays with confident depth
+                        depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
+                        if os.path.isfile(depth_mask_path):
+                            depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
+                            all_depths_mask.append(depth_mask)
+                        else:
+                            print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
+                            all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+                    else:
+                        all_depths.append(torch.zeros_like(img[...,0], device=img.device))
+                        all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
             
-            all_c2w = torch.stack(all_c2w, dim=0)   
+            all_c2w, all_images, all_fg_masks, all_depths, all_depths_mask = \
+                torch.stack(all_c2w, dim=0).float(), \
+                torch.stack(all_images, dim=0).float(), \
+                torch.stack(all_fg_masks, dim=0).float(), \
+                torch.stack(all_depths, dim=0).float(), \
+                torch.stack(all_depths_mask, dim=0).float()
 
             pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/0/points3D.bin'))
             pts3d = torch.from_numpy(np.array([pts3d[k].xyz for k in pts3d])).float()
@@ -260,12 +286,15 @@ class ColmapDatasetBase():
                 'img_wh': img_wh,
                 'factor': factor,
                 'has_mask': has_mask,
-                'apply_mask': apply_mask,
+                'apply_mask': self.apply_mask,
+                'apply_depth': self.apply_depth,
                 'directions': directions,
                 'pts3d': pts3d,
                 'all_c2w': all_c2w,
                 'all_images': all_images,
-                'all_fg_masks': all_fg_masks
+                'all_fg_masks': all_fg_masks,
+                'all_depths': all_depths,
+                'all_depths_mask': all_depths_mask,
             }
 
             ColmapDatasetBase.initialized = True
@@ -277,8 +306,6 @@ class ColmapDatasetBase():
             self.all_c2w = create_spheric_poses(self.all_c2w[:,:,3], n_steps=self.config.n_test_traj_steps)
             self.all_images = torch.zeros((self.config.n_test_traj_steps, self.h, self.w, 3), dtype=torch.float32)
             self.all_fg_masks = torch.zeros((self.config.n_test_traj_steps, self.h, self.w), dtype=torch.float32)
-        else:
-            self.all_images, self.all_fg_masks = torch.stack(self.all_images, dim=0).float(), torch.stack(self.all_fg_masks, dim=0).float()
 
         """
         # for debug use

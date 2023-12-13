@@ -11,13 +11,14 @@ dataset:
   center_est_method: point # camera
   n_test_traj_steps: 60
   apply_mask: false
+  apply_depth: false
   load_data_on_gpu: false
   max_imgs: 400
 
 model:
   name: neus
   radius: 1.0
-  num_samples_per_ray: 4096 # fewer than 1024 fails to learn SDF, although rendering is fine
+  num_samples_per_ray: 2048 # fewer than 1024 fails to learn SDF, although rendering is fine
   train_num_rays: 256
   max_train_num_rays: 8192
   grid_prune: true
@@ -133,7 +134,9 @@ system:
   loss:
     lambda_rgb_mse: 1.
     lambda_rgb_l1: 1.
+    lambda_rgb_cos: 0.0
     lambda_mask: 0.0
+    lambda_depth: 0.0
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 5e-4 # topology warmup

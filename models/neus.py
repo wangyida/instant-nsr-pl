@@ -278,6 +278,39 @@ class NeuSModel(BaseModel):
             'num_samples': torch.as_tensor([len(t_starts)], dtype=torch.int32, device=rays.device)
         }
 
+        try:
+            raymask = (sdf[:out['num_samples'] - 1] * sdf[1:out['num_samples']]) < 0
+            sf_ind = torch.where(raymask == True)[0]
+
+            # sdf out --> in check
+            sf_ind = sf_ind[torch.logical_and(sdf[sf_ind] > 0, sdf[sf_ind + 1] < 0)]
+
+            # ray indices check
+            sf_ind = sf_ind[ray_indices[sf_ind] == ray_indices[sf_ind + 1]]
+
+            # distance check
+            sf_ind = sf_ind[(midpoints[sf_ind + 1] - midpoints[sf_ind]).squeeze(-1) < dists[sf_ind].squeeze(-1) * 2]
+            # unique check
+            sdf0_valid_ray, tem_ind = torch.unique(ray_indices[sf_ind], return_inverse=True)
+
+            sdf0valid = torch.concat([torch.tensor([1.]).cuda(), tem_ind[1:] - tem_ind[:-1]]) > 0
+            sf_ind = sf_ind[sdf0valid]
+
+            # nearest surface
+            surf_at_scale = (sdf[sf_ind] / (sdf[sf_ind] - sdf[sf_ind + 1])).unsqueeze(-1)
+            sdf0 = midpoints[sf_ind] + (midpoints[sf_ind + 1] - midpoints[sf_ind]) * surf_at_scale
+            sdf0_normal = normal[sf_ind] + (normal[sf_ind + 1] - normal[sf_ind]) * surf_at_scale
+
+            sdf0_ray_distance = torch.zeros((n_rays, 1), device="cuda", dtype=torch.float32)
+            sdf0_ray_distance[sdf0_valid_ray, :] = sdf0
+            sdf0_ray_normal = torch.zeros((n_rays, 3), device="cuda", dtype=torch.float32)
+            sdf0_ray_normal[sdf0_valid_ray, :] = sdf0_normal
+
+            out.update({"sdf0_ray_distance": sdf0_ray_distance})
+            out.update({"sdf0_ray_normal": sdf0_ray_normal})
+        except:
+            out.update({"sdf0_ray_distance": torch.zeros((n_rays, 1), device="cuda", dtype=torch.float32)})
+            out.update({"sdf0_ray_normal": torch.zeros((n_rays, 3), device="cuda", dtype=torch.float32)})
         if self.training:
             out.update({
                 'sdf_samples': sdf,

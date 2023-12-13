@@ -16,7 +16,7 @@ dataset:
   n_test_traj_steps: 4
   apply_mask: false
   load_data_on_gpu: false
-  max_imgs: 500
+  max_imgs: 1500
 
 model:
   name: neus

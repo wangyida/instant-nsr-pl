@@ -3,6 +3,7 @@ import json
 import math
 import numpy as np
 from PIL import Image
+from termcolor import colored
 
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
@@ -98,10 +99,8 @@ class BlenderDatasetBase():
                     mask = Image.open(mask_path).convert('L')
                     mask = mask.resize(self.img_wh, Image.BICUBIC)
                     mask = TF.to_tensor(mask).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
-                    # self.all_fg_masks.append(mask) # (h, w)
                 elif img.shape[-1] == 4:
                     mask = img[..., -1]
-                    # self.all_fg_masks.append(img[..., -1]) # (h, w)
                 mask = mask.to(self.rank) if self.config.load_data_on_gpu else mask.cpu()
                 self.all_fg_masks.append(mask) # (h, w)
             else:
@@ -110,16 +109,20 @@ class BlenderDatasetBase():
 
             if self.apply_depth:
                 # load estimated or recorded depth map
-                try:
-                    depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
+                depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
+                if os.path.isfile(depth_path):
                     depth = torch.load(depth_path)[...,3]
                     self.all_depths.append(depth)
-                    # load the depth mask which is used to determine specific ray to get applied with depth supervision
-                    depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
-                    depth_mask = (torch.load(depth_mask_path)[...] < 0).to(bool)
-                    self.all_depths_mask.append(depth_mask)
-                except:
+                else:
+                    print(colored('skip, ', depth_path + 'does not exist', 'red'))
                     self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
+                # load the mask which is used to determine rays with confident depth
+                depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
+                if os.path.isfile(depth_mask_path):
+                    depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
+                    self.all_depths_mask.append(depth_mask)
+                else:
+                    print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
                     self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
             else:
                 self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))

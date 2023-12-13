@@ -19,7 +19,7 @@ dataset:
   train_split: 'train'
   val_split: 'val'
   test_split: 'test'
-  max_imgs: 1500
+  max_imgs: 1600
 
 model:
   name: neus

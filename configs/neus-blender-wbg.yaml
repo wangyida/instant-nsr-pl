@@ -19,7 +19,7 @@ dataset:
   train_split: 'train'
   val_split: 'val'
   test_split: 'test'
-  max_imgs: 1500
+  max_imgs: 1600
 
 model:
   name: neus
@@ -140,6 +140,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
+    lambda_depth_l1: [5e3, 1.0, 0.0, 1e5] # 1.
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 0
@@ -149,7 +150,7 @@ system:
     lambda_distortion_bg: 0.0
     lambda_opaque: 1e-2
     lambda_entropy: 1e-4
-    lambda_surface_bias: 0.0 # refer to D-NeuS
+    lambda_surface_bias: 0.0 # [5e3, 0.0, 0.1, 1e5] # refer to D-NeuS
   optimizer:
     name: AdamW
     args:

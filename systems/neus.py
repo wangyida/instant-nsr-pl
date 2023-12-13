@@ -55,8 +55,9 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
-            depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
+            if self.dataset.apply_depth:
+                depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -66,8 +67,9 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
-            depth = self.dataset.all_depths[index].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
+            if self.dataset.apply_depth:
+                depth = self.dataset.all_depths[index].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
 
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -88,10 +90,13 @@ class NeuSSystem(BaseSystem):
             'rays': rays,
             'rgb': rgb,
             'fg_mask': fg_mask,
-            'depth': depth,
-            'depth_mask': depth_mask,
             'camera_indices': index
         })      
+        if self.dataset.apply_depth:
+            batch.update({
+                'depth': depth,
+                'depth_mask': depth_mask,
+            })      
     
     def training_step(self, batch, batch_idx):
         out = self(batch)
@@ -116,9 +121,14 @@ class NeuSSystem(BaseSystem):
         loss += loss_rgb_cos * self.C(self.config.system.loss.lambda_rgb_cos)
 
         if self.dataset.apply_depth:
-            loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']] * batch['depth_mask'][out['rays_valid_full'][...,0]], batch['depth'][out['rays_valid_full'][...,0]] * batch['depth_mask'][out['rays_valid_full'][...,0]])
+            # patchmatch_mask = torch.logical_and(patchmatch_valid_mask, out['rays_valid_full'].squeeze(-1))
+            depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]]
+            if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0]:
+                depth_mask *= (batch['fg_mask'] > 0.5)
+            # loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
+            loss_depth_l1 = F.l1_loss(out['sdf0_ray_distance'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
             self.log('train/loss_depth_l1', loss_depth_l1)
-            loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_rgb_mse)
+            loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_depth_l1)
 
         if self.C(self.config.system.loss.lambda_adaptive) > 0.0 and self.C(self.config.system.loss.lambda_adaptive) < 1.0:
             with torch.no_grad():
@@ -145,8 +155,8 @@ class NeuSSystem(BaseSystem):
         loss += loss_sparsity * self.C(self.config.system.loss.lambda_sparsity)
 
         if self.C(self.config.system.loss.lambda_surface_bias) > 0:
-            # loss_bias = F.l1_loss(out['sdf_rendered'], torch.zeros_like(out['sdf_rendered']), reduction='mean')
-            loss_bias = F.l1_loss(out['depth'], torch.zeros_like(out['depth']), reduction='mean')
+            loss_bias = F.l1_loss(out['sdf_rendered'], torch.zeros_like(out['sdf_rendered']), reduction='mean')
+            # loss_bias = F.l1_loss(out['depth'], torch.zeros_like(out['depth']), reduction='mean')
             loss += loss_bias * self.C(self.config.system.loss.lambda_surface_bias) 
         if self.C(self.config.system.loss.lambda_curvature) > 0:
             assert 'sdf_laplace_samples' in out, "Need geometry.grad_type='finite_difference' to get SDF Laplace samples"
@@ -291,7 +301,8 @@ class NeuSSystem(BaseSystem):
             psnr = torch.mean(torch.stack([o['psnr'] for o in out_set.values()]))
             self.log('test/psnr', psnr, prog_bar=True, rank_zero_only=True)    
 
-            """
+            self.export()
+
             self.save_img_sequence(
                 f"it{self.global_step}-test",
                 f"it{self.global_step}-test",
@@ -299,27 +310,34 @@ class NeuSSystem(BaseSystem):
                 save_format='mp4',
                 fps=30
             )
-            """
-            
-            self.export()
     
     def export(self):
         mesh = self.model.export(self.config.export)
         self.save_mesh(
-            f"it{self.global_step}-{self.config.model.geometry.isosurface.method}{self.config.model.geometry.isosurface.resolution}.obj",
+            filename=f"it{self.global_step}-{self.config.model.geometry.isosurface.method}{self.config.model.geometry.isosurface.resolution}.obj",
             **mesh
         )        
         try:
             self.dataset.transform_s
-            # export with original pose
+            # export with the original pose
             vertices = np.asarray(mesh['v_pos'])
             vertices *= self.dataset.transform_s
             vertices -= torch.squeeze(self.dataset.transform_t).repeat(vertices.shape[0], 1).numpy()
             vertices = np.transpose(torch.inverse(self.dataset.transform_R).numpy() @ np.transpose(vertices))
             mesh['v_pos'] = torch.tensor(vertices)
-            self.save_mesh(
-                f"it{self.global_step}-{self.config.model.geometry.isosurface.method}{self.config.model.geometry.isosurface.resolution}-ori.obj",
-                **mesh
-            )
+            if self.config.dataset.mesh_outpath != False:
+                self.save_mesh(
+                    filename=None,
+                    filename_full=f"{self.config.dataset.mesh_outpath}",
+                    **mesh
+                )
+            else:
+                self.save_mesh(
+                    filename=f"mesh_neus.obj",
+                    **mesh
+                )        
+            if self.config.dataset.name == "hmvs":
+                from scripts.gen_tasks import write_json
+                write_json(status=0)
         except:
             print("Model is already saved in original scale.")

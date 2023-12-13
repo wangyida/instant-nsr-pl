@@ -9,6 +9,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import json
 
 import torch
+import trimesh
 
 from utils.obj import write_obj
 
@@ -208,18 +209,20 @@ class SaverMixin():
             imgs = [cv2.cvtColor(i, cv2.COLOR_BGR2RGB) for i in imgs]
             imageio.mimsave(self.get_save_path(filename), imgs, fps=fps)
     
-    def save_mesh(self, filename, v_pos, t_pos_idx, v_tex=None, t_tex_idx=None, v_rgb=None):
+    def save_mesh(self, filename, v_pos, t_pos_idx, v_tex=None, t_tex_idx=None, v_rgb=None, filename_full=None):
         v_pos, t_pos_idx = self.convert_data(v_pos), self.convert_data(t_pos_idx)
         if v_rgb is not None:
             v_rgb = self.convert_data(v_rgb)
 
-        import trimesh
         mesh = trimesh.Trimesh(
             vertices=v_pos,
             faces=t_pos_idx,
             vertex_colors=v_rgb
         )
-        mesh.export(self.get_save_path(filename))
+        if filename is not None:
+            mesh.export(self.get_save_path(filename))
+        elif filename_full is not None:
+            mesh.export(filename_full)
     
     def save_file(self, filename, src_path):
         shutil.copyfile(src_path, self.get_save_path(filename))

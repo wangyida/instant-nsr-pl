@@ -5,19 +5,21 @@ seed: 42
 dataset:
   name: colmap
   root_dir: ./load/unbounded360/garden
-  img_downscale: 4 # specify training image size by either img_wh or img_downscale
+  img_downscale: 2 # 4 # specify training image size by either img_wh or img_downscale
   cam_downscale: 2.5 # if false, to rescale the cameras/pts positions automatically
   up_est_method: ground # if true, use estimated ground plane normal direction as up direction
-  center_est_method: lookat
-  n_test_traj_steps: 120
+  center_est_method: point # lookat
+  n_test_traj_steps: 60
   apply_mask: false
+  apply_depth: false
   load_data_on_gpu: false
+  max_imgs: 400
 
 model:
   name: nerf
   radius: 1.0
-  num_samples_per_ray: 2048
-  train_num_rays: 128
+  num_samples_per_ray: 4096
+  train_num_rays: 256
   max_train_num_rays: 8192
   grid_prune: true
   dynamic_ray_sampling: true
@@ -34,9 +36,9 @@ model:
     density_bias: -1
     isosurface:
       method: mc
-      resolution: 256
+      resolution: 768
       chunk: 2097152
-      threshold: 5.0
+      threshold: 10.0
     xyz_encoding_config:
       otype: HashGrid
       n_levels: 16
@@ -68,6 +70,49 @@ model:
       output_activation: Sigmoid
       n_neurons: 64
       n_hidden_layers: 2
+    max_imgs: ${dataset.max_imgs}
+    use_appearance_embedding: false
+    use_average_appearance_embedding: ture
+    appearance_embedding_dim: 16
+  # background model configurations
+  num_samples_per_ray_bg: 256
+  geometry_bg:
+    name: volume-density
+    radius: ${model.radius}
+    feature_dim: 8
+    density_activation: trunc_exp
+    density_bias: -1
+    isosurface: null
+    xyz_encoding_config:
+      otype: HashGrid
+      n_levels: 16
+      n_features_per_level: 2
+      log2_hashmap_size: 19
+      base_resolution: 32
+      per_level_scale: 1.3195079107728942
+    mlp_network_config:
+      otype: VanillaMLP
+      activation: ReLU
+      output_activation: none
+      n_neurons: 64
+      n_hidden_layers: 1
+  texture_bg:
+    name: volume-radiance
+    input_feature_dim: ${model.geometry_bg.feature_dim}
+    dir_encoding_config:
+      otype: SphericalHarmonics
+      degree: 4
+    mlp_network_config:
+      otype: VanillaMLP
+      activation: ReLU
+      output_activation: none
+      n_neurons: 64
+      n_hidden_layers: 2
+    color_activation: sigmoid
+    max_imgs: ${dataset.max_imgs}
+    use_appearance_embedding: false
+    use_average_appearance_embedding: ture
+    appearance_embedding_dim: 8
 
 system:
   name: nerf-system
