@@ -133,10 +133,10 @@ class NeuSSystem(BaseSystem):
 
         if self.dataset.apply_depth:
             # patchmatch_mask = torch.logical_and(patchmatch_valid_mask, out['rays_valid_full'].squeeze(-1))
-            depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]] * rgb_mse
-            if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0]:
+            depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]]
+            if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0] and depth_mask.shape[0] == rgb_mse.shape[0]:
                 depth_mask *= (batch['fg_mask'] > 0.5)
-            # loss_depth_l1 = F.l1_loss(out['depth'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
+                depth_mask *= rgb_mse
             loss_depth_l1 = F.l1_loss(out['sdf0_ray_distance'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
             self.log('train/loss_depth_l1', loss_depth_l1)
             loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_depth_l1)

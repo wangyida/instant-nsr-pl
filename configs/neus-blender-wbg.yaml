@@ -23,7 +23,7 @@ dataset:
 
 model:
   name: neus
-  radius: 1.5
+  radius: 2.
   num_samples_per_ray: 4096
   train_num_rays: 256
   max_train_num_rays: 8192
@@ -140,7 +140,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
-    lambda_depth_l1: [5e3, 1.0, 0.0, 1e5] # 1.
+    lambda_depth_l1: [5e3, 1.0, 0.0, 8e4] # 1.
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 0
@@ -193,7 +193,7 @@ export:
   export_vertex_color: True  
 
 trainer:
-  max_steps: 1e5
+  max_steps: 8e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
   val_check_interval: 1e4
