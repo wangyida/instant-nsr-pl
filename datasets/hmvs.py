@@ -381,7 +381,7 @@ class ColmapDatasetBase():
                             mask_path = os.path.join(
                                 mask_ori_dir,
                                 fns[i].split("/")[-1][:-3] + 'png')
-                        mask = Image.open(mask_path).convert('L')  # (H, W, 1)
+                        mask = Image.open(mask_path)  # (H, W, 1)
                         if mask.size[0] != w or mask.size[1] != h:
                             mask = mask.resize(img_wh, Image.BICUBIC)
                             mask.save(
@@ -410,7 +410,7 @@ class ColmapDatasetBase():
                             depth_path = fns[i].replace(
                                 f"{img_folder}",
                                 f"/{depth_folder}").replace(".jpg", ".tif")
-                        depth = Image.open(depth_path).convert('L')
+                        depth = Image.open(depth_path)
                         depth_path = fns[i].replace(
                             f"{img_folder}",
                             f"/{depth_folder}_{self.config.img_downscale}"

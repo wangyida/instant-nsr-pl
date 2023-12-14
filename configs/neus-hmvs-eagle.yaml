@@ -9,15 +9,15 @@ dataset:
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
   img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 70 # if false, to rescale the cameras/pts positions automatically
+  cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: camera # z-axis # camera/ground/z-axis 
   center_est_method: point # camera/point
-  n_test_traj_steps: 60
+  n_test_traj_steps: 2
   apply_mask: false
-  apply_depth: true # false
+  apply_depth: false
   load_data_on_gpu: false
-  max_imgs: 1500
+  max_imgs: 1600
 
 model:
   name: neus
@@ -139,7 +139,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
-    lambda_depth_l1: [5e3, 0.0, 1.0, 1e5] # 1.
+    lambda_depth_l1: 0.0 # [5e3, 0.0, 1.0, 1e5]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 0.0 # topology warmup
@@ -192,10 +192,10 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 1e5
+  max_steps: 8e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 1e4
+  val_check_interval: 4e4
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true
