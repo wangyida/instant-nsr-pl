@@ -61,22 +61,23 @@ class BlenderDatasetBase():
         try:
             self.k1 = meta['k1']
             self.k2 = meta['k2']
+            self.k3 = meta['k3']
+            self.k4 = meta['k4']
             with_distort = True
         except:
             self.k1 = 0.0
             self.k2 = 0.0
+            self.k3 = 0.0
+            self.k4 = 0.0
             with_distort = False
 
         # ray directions for all pixels, same for all images (same H, W, focal)
-        self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2).cpu() # (h, w, 3)
+        self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).cpu() # (h, w, 3)
 
         self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depths_mask = [], [], [], [], []
 
         for i, frame in enumerate(meta['frames']):
             c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
-            if with_distort:
-                # NOTE: c3vd data is presented in colmap coordinate 
-                c2w[:3, 1:3] *= -1. # OpenGL or COLMAP coordinates
             self.all_c2w.append(c2w)
 
             img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}.png")
@@ -111,19 +112,27 @@ class BlenderDatasetBase():
                 # load estimated or recorded depth map
                 depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
                 if os.path.isfile(depth_path):
-                    depth = torch.load(depth_path)[...,3]
+                    try:
+                        depth = torch.load(depth_path)[...,3]
+                    except:
+                        depth = Image.open(depth_path).convert('L')
+                        depth = depth.resize(self.img_wh, Image.BICUBIC)
+                        depth = TF.to_tensor(depth).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
                     self.all_depths.append(depth)
                 else:
                     print(colored('skip, ', depth_path + 'does not exist', 'red'))
                     self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                 # load the mask which is used to determine rays with confident depth
-                depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
-                if os.path.isfile(depth_mask_path):
-                    depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
-                    self.all_depths_mask.append(depth_mask)
-                else:
-                    print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
-                    self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+                try:
+                    depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
+                    if os.path.isfile(depth_mask_path):
+                        depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
+                        self.all_depths_mask.append(depth_mask)
+                    else:
+                        print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
+                        self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+                except:
+                    self.all_depths_mask.append(torch.ones_like(img[...,0], device=img.device))
             else:
                 self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                 self.all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))

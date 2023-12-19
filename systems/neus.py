@@ -122,9 +122,8 @@ class NeuSSystem(BaseSystem):
 
         with torch.no_grad():
             rgb_mse = torch.mean((out['comp_rgb_full'] - batch['rgb']) ** 2, dim=1)
+            exposure_mse = torch.mean((torch.zeros_like(batch['rgb']) - batch['rgb']) ** 2, dim=1) + 0.0001
         if self.C(self.config.system.loss.lambda_adaptive) > 0.0 and self.C(self.config.system.loss.lambda_adaptive) < 1.0:
-            with torch.no_grad():
-                exposure_mse = torch.mean((torch.zeros_like(batch['rgb']) - batch['rgb']) ** 2, dim=1) + 0.0001
             diff_rays = self.C(self.config.system.loss.lambda_adaptive) / (rgb_mse + self.C(self.config.system.loss.lambda_adaptive))
             diff_pts = diff_rays[out['ray_indices']]
         else:
@@ -138,8 +137,7 @@ class NeuSSystem(BaseSystem):
             depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]]
             if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0] and depth_mask.shape[0] == rgb_mse.shape[0]:
                 depth_mask *= (batch['fg_mask'] > 0.5)
-                depth_mask *= rgb_mse
-                depth_mask /= exposure_mse
+                depth_mask *= (rgb_mse / exposure_mse)
             loss_depth_l1 = F.l1_loss(out['sdf0_ray_distance'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
             self.log('train/loss_depth_l1', loss_depth_l1)
             loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_depth_l1)
