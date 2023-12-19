@@ -120,9 +120,10 @@ class NeuSSystem(BaseSystem):
         self.log('train/loss_rgb_cos', loss_rgb_cos)
         loss += loss_rgb_cos * self.C(self.config.system.loss.lambda_rgb_cos)
 
+        with torch.no_grad():
+            rgb_mse = torch.mean((out['comp_rgb_full'] - batch['rgb']) ** 2, dim=1)
         if self.C(self.config.system.loss.lambda_adaptive) > 0.0 and self.C(self.config.system.loss.lambda_adaptive) < 1.0:
             with torch.no_grad():
-                rgb_mse = torch.mean((out['comp_rgb_full'] - batch['rgb']) ** 2, dim=1)
                 exposure_mse = torch.mean((torch.zeros_like(batch['rgb']) - batch['rgb']) ** 2, dim=1) + 0.0001
             diff_rays = self.C(self.config.system.loss.lambda_adaptive) / (rgb_mse + self.C(self.config.system.loss.lambda_adaptive))
             diff_pts = diff_rays[out['ray_indices']]
