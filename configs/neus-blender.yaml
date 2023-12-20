@@ -96,6 +96,7 @@ system:
   loss:
     lambda_rgb_mse: 1. # 10.
     lambda_rgb_l1: 1. # 0.
+    lambda_rgb_cos: 0.
     lambda_mask: 0.1
     lambda_eikonal: 0.1
     lambda_adaptive: 0.0 # 1e-6
