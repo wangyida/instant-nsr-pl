@@ -90,7 +90,7 @@ class BlenderDatasetBase():
                 if with_distort:
                     # NOTE: c3vd data supplement mask from depth images
                     depth_path = img_path.replace("images", "depths").replace("color.png", "depth.tiff")
-                    depth = Image.open(depth_path).convert('L')
+                    depth = Image.open(depth_path)
                     depth = depth.resize(self.img_wh, Image.BICUBIC)
                     depth = TF.to_tensor(depth).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
                     mask = torch.ones_like(img[...,0], device=img.device)
@@ -115,7 +115,7 @@ class BlenderDatasetBase():
                     try:
                         depth = torch.load(depth_path)[...,3]
                     except:
-                        depth = Image.open(depth_path).convert('L')
+                        depth = Image.open(depth_path)
                         depth = depth.resize(self.img_wh, Image.BICUBIC)
                         depth = TF.to_tensor(depth).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
                     self.all_depths.append(depth)

@@ -503,7 +503,7 @@ class ColmapDatasetBase():
             self.all_c2w = create_spheric_poses(
                 self.all_c2w[:, :, 3], n_steps=self.config.n_test_traj_steps)
             # NOTE: 300 is a hyper-parameter which determines the zoom-in scale
-            self.all_c2w[:, :, 3] /= (300 / self.config.cam_downscale)
+            # self.all_c2w[:, :, 3] /= (300 / self.config.cam_downscale)
             self.all_images = torch.zeros(
                 (self.config.n_test_traj_steps, self.h, self.w, 3),
                 dtype=torch.float32)

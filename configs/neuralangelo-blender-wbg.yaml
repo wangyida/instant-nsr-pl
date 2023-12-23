@@ -145,7 +145,7 @@ system:
     lambda_depth_l1: [5e3, 1.0, 0.0, 8e4] # 1.
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
-    lambda_curvature: 0.0 # 5e-4 # topology warmup
+    lambda_curvature: 5e-4 # topology warmup
     curvature_warmup_steps: ${model.geometry.xyz_encoding_config.update_steps}
     lambda_sparsity: 0.0
     sparsity_scale: 1.
