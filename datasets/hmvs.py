@@ -155,11 +155,13 @@ def normalize_poses(poses,
         R_z = torch.tensor(np.pad(R_z, [0, 1])).float()
         R_z[-1, -1] = 1
         poses = torch.as_tensor(poses[:, :3]).float()
+    elif up_est_method == 'no-change':
+        R_z = torch.tensor([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
     else:
         raise NotImplementedError(
             f'Unknown up estimation method: {up_est_method}')
 
-    if not up_est_method == 'z-axis':
+    if not up_est_method == 'no-change' and not up_est_method == 'z-axis':
         # new axis
         y_ = torch.as_tensor([z[1], -z[0], 0.])
         x = F.normalize(y_.cross(z), dim=0)
@@ -167,8 +169,12 @@ def normalize_poses(poses,
 
     if center_est_method == 'point':
         # rotation
-        Rc = R_z[:3, :3].T if up_est_method == 'z-axis' else torch.stack(
-            [x, y, z], dim=1)
+        if up_est_method == 'z-axis':
+            Rc = R_z[:3, :3].T  
+        elif up_est_method == 'no-change':
+            Rc = R_z
+        else:
+            Rc = torch.stack([x, y, z], dim=1)
         R = Rc.T
         poses_homo = torch.cat([
             poses,
@@ -228,8 +234,12 @@ def normalize_poses(poses,
 
     else:
         # rotation and translation
-        Rc = R_z[:3, :3].T if up_est_method == 'z-axis' else torch.stack(
-            [x, y, z], dim=1)
+        if up_est_method == 'z-axis':
+            Rc = R_z[:3, :3].T  
+        elif up_est_method == 'no-change':
+            Rc = R_z
+        else:
+            Rc = torch.stack([x, y, z], dim=1)
         tc = center.reshape(3, 1)
         R, t = Rc.T, -Rc.T @ tc
         poses_homo = torch.cat([

@@ -11,7 +11,7 @@ dataset:
   img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
   cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
-  up_est_method: camera # z-axis # camera/ground/z-axis 
+  up_est_method: no-change # camera # camera/ground/z-axis 
   center_est_method: point # camera/point
   n_test_traj_steps: 2
   apply_mask: false
