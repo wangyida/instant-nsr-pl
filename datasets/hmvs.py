@@ -22,14 +22,19 @@ import copy
 import logging
 import numpy as np
 import argparse
-import R3DParser
+try:
+    import R3DParser
+except:
+    import R3DUtil
 import pyransac3d as pyrsc
 
 
 def bin2camera(work_space, bin_file):
     """convert r3d bin data to cmaera ex/intrinsics"""
-    cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DParser.LoadR3DBinDataset(
-        work_space, bin_file)
+    try:
+        cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DParser.LoadR3DBinDataset(work_space, bin_file)
+    except:
+        cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DUtil.LoadR3DBinDataset(work_space, bin_file)
     cam_intrinsics = cam_intrinsics.reshape(-1, 3, 3)
     resolutions = resolutions.reshape(-1, 2)
     cam_rotations = cam_rotations.reshape(-1, 3, 3)
