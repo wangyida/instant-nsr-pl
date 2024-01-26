@@ -331,7 +331,7 @@ class ColmapDatasetBase():
             mask_dir = os.path.join(self.config.root_dir,
                                     f'Mask_{self.config.img_downscale}')
 
-            all_images, all_fg_masks, all_depths, all_depths_mask, directions = [], [], [], [], []
+            all_images, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], []
 
             for i, d in enumerate(all_c2w):
                 intrinsic = intrinsics[i]
@@ -446,7 +446,7 @@ class ColmapDatasetBase():
                     all_fg_masks.append(mask)  # (h, w)
                     all_images.append(img)
                     all_depths.append(depth)  # (h, w)
-                    all_depths_mask.append(depth_mask)
+                    all_depth_masks.append(depth_mask)
 
             directions = torch.stack(directions, dim=0)
             all_c2w = torch.tensor(all_c2w)[:, :3]
@@ -503,7 +503,7 @@ class ColmapDatasetBase():
                 'all_images': all_images,
                 'all_fg_masks': all_fg_masks,
                 'all_depths': all_depths,
-                'all_depths_mask': all_depths_mask,
+                'all_depth_masks': all_depth_masks,
                 'transform_R': R,
                 'transform_t': t,
                 'transform_s': scale
@@ -528,15 +528,15 @@ class ColmapDatasetBase():
             self.all_depths = torch.zeros(
                 (self.config.n_test_traj_steps, self.h, self.w),
                 dtype=torch.float32)
-            self.all_depths_mask = torch.zeros(
+            self.all_depth_masks = torch.zeros(
                 (self.config.n_test_traj_steps, self.h, self.w),
                 dtype=torch.bool)
         else:
-            self.all_images, self.all_fg_masks, self.all_depths, self.all_depths_mask = torch.stack(
+            self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks = torch.stack(
                 self.all_images, dim=0).float(), torch.stack(
                     self.all_fg_masks, dim=0).float(), torch.stack(
                         self.all_depths,
-                        dim=0).float(), torch.stack(self.all_depths_mask,
+                        dim=0).float(), torch.stack(self.all_depth_masks,
                                                     dim=0).bool()
         """
         # for debug use

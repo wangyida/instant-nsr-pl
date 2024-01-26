@@ -181,7 +181,7 @@ class ColmapDatasetBase():
         self.rank = get_rank()
 
         if not ColmapDatasetBase.initialized:
-            camdata = read_cameras_binary(os.path.join(self.config.root_dir, 'sparse/0/cameras.bin'))
+            camdata = read_cameras_binary(os.path.join(self.config.root_dir, 'sparse/10/cameras.bin'))
 
             H = int(camdata[1].height)
             W = int(camdata[1].width)
@@ -211,14 +211,14 @@ class ColmapDatasetBase():
             
             directions = get_ray_directions(w, h, fx, fy, cx, cy).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(w, h, fx, fy, cx, cy).cpu()
 
-            imdata = read_images_binary(os.path.join(self.config.root_dir, 'sparse/0/images.bin'))
+            imdata = read_images_binary(os.path.join(self.config.root_dir, 'sparse/10/images.bin'))
 
             mask_dir = os.path.join(self.config.root_dir, 'masks')
             has_mask = os.path.exists(mask_dir) # TODO: support partial masks
             self.apply_mask = has_mask and self.config.apply_mask
             self.apply_depth = self.config.apply_depth
             
-            all_c2w, all_images, all_fg_masks, all_depths, all_depths_mask = [], [], [], [], []
+            all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = [], [], [], [], [], []
 
             for i, d in enumerate(imdata.values()):
                 R = d.qvec2rotmat()
@@ -246,8 +246,10 @@ class ColmapDatasetBase():
                         mask = TF.to_tensor(mask)[0]
                     else:
                         mask = torch.ones_like(img[...,0], device=img.device)
+                        vis_mask = torch.ones_like(img[...,0], device=img.device)
                     all_fg_masks.append(mask) # (h, w)
                     all_images.append(img)
+                    all_vis_masks.append(vis_mask)
                     if self.apply_depth:
                         # load estimated or recorded depth map
                         depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
@@ -261,22 +263,23 @@ class ColmapDatasetBase():
                         depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
                         if os.path.isfile(depth_mask_path):
                             depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
-                            all_depths_mask.append(depth_mask)
+                            all_depth_masks.append(depth_mask)
                         else:
                             print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
-                            all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+                            all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
                     else:
                         all_depths.append(torch.zeros_like(img[...,0], device=img.device))
-                        all_depths_mask.append(torch.zeros_like(img[...,0], device=img.device))
+                        all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
             
-            all_c2w, all_images, all_fg_masks, all_depths, all_depths_mask = \
+            all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, self.all_vis_masks = \
                 torch.stack(all_c2w, dim=0).float(), \
                 torch.stack(all_images, dim=0).float(), \
                 torch.stack(all_fg_masks, dim=0).float(), \
                 torch.stack(all_depths, dim=0).float(), \
-                torch.stack(all_depths_mask, dim=0).float()
+                torch.stack(all_depth_masks, dim=0).float(), \
+                torch.stack(all_vis_masks, dim=0).float()
 
-            pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/0/points3D.bin'))
+            pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/10/points3D.bin'))
             pts3d = torch.from_numpy(np.array([pts3d[k].xyz for k in pts3d])).float()
             all_c2w, pts3d = normalize_poses(all_c2w, pts3d, up_est_method=self.config.up_est_method, center_est_method=self.config.center_est_method, cam_downscale=self.config.cam_downscale)
 
@@ -294,7 +297,7 @@ class ColmapDatasetBase():
                 'all_images': all_images,
                 'all_fg_masks': all_fg_masks,
                 'all_depths': all_depths,
-                'all_depths_mask': all_depths_mask,
+                'all_depth_masks': all_depth_masks,
             }
 
             ColmapDatasetBase.initialized = True

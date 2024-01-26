@@ -98,6 +98,7 @@ system:
     lambda_rgb_l1: 1. # 0.
     lambda_rgb_cos: 0.
     lambda_mask: 0.1
+    lambda_depth_l1: [5e3, 1.0, 0.0, 8e4] # 1.
     lambda_eikonal: 0.1
     lambda_adaptive: 0.0 # 1e-6
     lambda_curvature: 0

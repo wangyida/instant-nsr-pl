@@ -55,9 +55,10 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
+            vis_mask = self.dataset.all_vis_masks[index, y, x].view(-1).to(self.rank)
             if self.dataset.apply_depth:
                 depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
-                depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depth_masks[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -67,9 +68,10 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
+            vis_mask = self.dataset.all_vis_masks[index].view(-1).to(self.rank)
             if self.dataset.apply_depth:
                 depth = self.dataset.all_depths[index].view(-1).to(self.rank)
-                depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depth_masks[index].view(-1).to(self.rank)
 
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -90,6 +92,7 @@ class NeuSSystem(BaseSystem):
             'rays': rays,
             'rgb': rgb,
             'fg_mask': fg_mask,
+            'vis_mask': vis_mask,
             'camera_indices': index
         })      
         if self.dataset.apply_depth:
@@ -108,15 +111,16 @@ class NeuSSystem(BaseSystem):
             train_num_rays = int(self.train_num_rays * (self.train_num_samples / out['num_samples_full'].sum().item()))        
             self.train_num_rays = min(int(self.train_num_rays * 0.9 + train_num_rays * 0.1), self.config.model.max_train_num_rays)
 
-        loss_rgb_mse = F.mse_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
+        vis_mask = batch['vis_mask'][out['rays_valid_full'][...,0]][...,None]
+        loss_rgb_mse = F.mse_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]] * vis_mask, batch['rgb'][out['rays_valid_full'][...,0]] * vis_mask)
         self.log('train/loss_rgb_mse', loss_rgb_mse)
         loss += loss_rgb_mse * self.C(self.config.system.loss.lambda_rgb_mse)
 
-        loss_rgb_l1 = F.l1_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
+        loss_rgb_l1 = F.l1_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]] * vis_mask, batch['rgb'][out['rays_valid_full'][...,0]] * vis_mask)
         self.log('train/loss_rgb', loss_rgb_l1)
         loss += loss_rgb_l1 * self.C(self.config.system.loss.lambda_rgb_l1)
 
-        loss_rgb_cos = torch.mean(1.0 - F.cosine_similarity(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]], dim=-1))
+        loss_rgb_cos = torch.mean(1.0 - F.cosine_similarity(out['comp_rgb_full'][out['rays_valid_full'][...,0]] * vis_mask, batch['rgb'][out['rays_valid_full'][...,0]] * vis_mask, dim=-1))
         self.log('train/loss_rgb_cos', loss_rgb_cos)
         loss += loss_rgb_cos * self.C(self.config.system.loss.lambda_rgb_cos)
 
