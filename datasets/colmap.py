@@ -246,10 +246,10 @@ class ColmapDatasetBase():
                         mask = TF.to_tensor(mask)[0]
                     else:
                         mask = torch.ones_like(img[...,0], device=img.device)
-                        vis_mask = torch.ones_like(img[...,0], device=img.device)
+                    vis_mask = torch.ones_like(img[...,0], device=img.device)
                     all_fg_masks.append(mask) # (h, w)
+                    all_vis_masks.append(vis_mask) # (h, w)
                     all_images.append(img)
-                    all_vis_masks.append(vis_mask)
                     if self.apply_depth:
                         # load estimated or recorded depth map
                         depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
@@ -271,7 +271,7 @@ class ColmapDatasetBase():
                         all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                         all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
             
-            all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, self.all_vis_masks = \
+            all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = \
                 torch.stack(all_c2w, dim=0).float(), \
                 torch.stack(all_images, dim=0).float(), \
                 torch.stack(all_fg_masks, dim=0).float(), \
@@ -298,6 +298,7 @@ class ColmapDatasetBase():
                 'all_fg_masks': all_fg_masks,
                 'all_depths': all_depths,
                 'all_depth_masks': all_depth_masks,
+                'all_vis_masks': all_vis_masks,
             }
 
             ColmapDatasetBase.initialized = True
@@ -309,6 +310,7 @@ class ColmapDatasetBase():
             self.all_c2w = create_spheric_poses(self.all_c2w[:,:,3], n_steps=self.config.n_test_traj_steps)
             self.all_images = torch.zeros((self.config.n_test_traj_steps, self.h, self.w, 3), dtype=torch.float32)
             self.all_fg_masks = torch.zeros((self.config.n_test_traj_steps, self.h, self.w), dtype=torch.float32)
+            self.all_vis_masks = torch.ones((self.config.n_test_traj_steps, self.h, self.w), dtype=torch.float32)
 
         """
         # for debug use
@@ -342,6 +344,7 @@ class ColmapDatasetBase():
         if self.config.load_data_on_gpu:
             self.all_images = self.all_images.to(self.rank) 
             self.all_fg_masks = self.all_fg_masks.to(self.rank)
+            self.all_vis_masks = self.all_vis_masks.to(self.rank)
         
 
 class ColmapDataset(Dataset, ColmapDatasetBase):
