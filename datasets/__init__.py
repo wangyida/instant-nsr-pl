@@ -19,16 +19,14 @@ def make(name, config):
                 import R3DParser
             except:
                 import R3DUtil
-            from . import hmvs
         except:
             print(
                 colored(
-                    "Error: 'R3DParser' or 'R3DUtils' should be explicitly included",
-                    'red'),
-                colored(
-                    "Try: export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/",
-                    'blue'))
-            sys.exit()
+                    "'R3DParser' or 'R3DUtils' should be explicitly included in case you are deploying on Starmap",
+                    'yellow'))
+            print("solution: export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/")
+        from . import hmvs
+            # sys.exit()
     dataset = datasets[name](config)
     return dataset
 

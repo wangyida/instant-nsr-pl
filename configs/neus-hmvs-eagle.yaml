@@ -8,7 +8,7 @@ dataset:
   pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
-  img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
+  img_downscale: 2 # better with more than 1000 x 1000 resolution
   cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: no-change # camera # camera/ground/z-axis 

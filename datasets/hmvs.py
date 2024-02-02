@@ -22,10 +22,12 @@ import copy
 import logging
 import numpy as np
 import argparse
+"""
 try:
     import R3DParser
 except:
     import R3DUtil
+"""
 import pyransac3d as pyrsc
 
 
@@ -319,10 +321,22 @@ class ColmapDatasetBase():
         self.rank = get_rank()
 
         if not ColmapDatasetBase.initialized:
-            assert os.path.isfile(self.config.pose_path)
-            # NOTE: self.config.root_dir determines the 'WorkSpace' used in parser
-            all_c2w, intrinsics, fns = bin2camera(self.config.root_dir,
-                                                  self.config.pose_path)
+            try:
+                try:
+                    import R3DParser
+                except:
+                    import R3DUtil
+                assert os.path.isfile(self.config.pose_path)
+                # NOTE: self.config.root_dir determines the 'WorkSpace' used in parser
+                all_c2w, intrinsics, fns = bin2camera(self.config.root_dir,
+                                                      self.config.pose_path)
+            except:
+                all_c2w, intrinsics = np.load(os.path.join(self.config.root_dir,
+                                    'extrinsics.npy')), np.load(os.path.join(self.config.root_dir,
+                                    'intrinsics.npy'))
+                fns = sorted(os.listdir(os.path.join(self.config.root_dir,
+                                    'images'))) 
+                fns = [os.path.join(self.config.root_dir, 'images', fn) for fn in fns]
             mask_ori_dir = os.path.join(self.config.root_dir, 'Mask')
             has_mask = os.path.exists(
                 mask_ori_dir)  # TODO: support partial masks
@@ -331,30 +345,43 @@ class ColmapDatasetBase():
             mask_dir = os.path.join(self.config.root_dir,
                                     f'Mask_{self.config.img_downscale}')
 
-            all_images, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], []
+            all_images, all_vis_masks, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], [], []
 
             for i, d in enumerate(all_c2w):
-                intrinsic = intrinsics[i]
-                H = int(intrinsic["height"])
-                W = int(intrinsic["width"])
-
-                if 'img_wh' in self.config:
-                    w, h = self.config.img_wh
-                    assert round(W / w * h) == H
-                elif 'img_downscale' in self.config:
-                    w, h = int(W / self.config.img_downscale +
-                               0.5), int(H / self.config.img_downscale + 0.5)
+                if isinstance(intrinsics[i], np.ndarray):
+                    W = 3840
+                    H = 2160
+                    if 'img_wh' in self.config:
+                        w, h = self.config.img_wh
+                    else:
+                        factor = 1.0 / self.config.img_downscale
+                        w, h = int(W * factor), int(H * factor)
+                    img_wh = (w, h)
+                    intrinsic = intrinsics[i]
+                    fx = fy = (intrinsic[0,0] + intrinsic[1,1]) / 2.0 * factor  # camdata[1].params[0] * factor
+                    cx = intrinsic[0, 2] * factor
+                    cy = intrinsic[1, 2] * factor
                 else:
-                    raise KeyError(
-                        "Either img_wh or img_downscale should be specified.")
+                    intrinsic = intrinsics[i]
+                    H = int(intrinsic["height"])
+                    W = int(intrinsic["width"])
 
-                img_wh = (w, h)
-                factor = w / W
+                    if 'img_wh' in self.config:
+                        w, h = self.config.img_wh
+                    elif 'img_downscale' in self.config:
+                        w, h = int(W / self.config.img_downscale +
+                                   0.5), int(H / self.config.img_downscale + 0.5)
+                    else:
+                        raise KeyError(
+                            "Either img_wh or img_downscale should be specified.")
 
-                fx = fy = intrinsic[
-                    "f"] * factor  # camdata[1].params[0] * factor
-                cx = intrinsic["cx"] * factor
-                cy = intrinsic["cy"] * factor
+                    img_wh = (w, h)
+                    factor = w / W
+
+                    fx = fy = intrinsic[
+                        "f"] * factor  # camdata[1].params[0] * factor
+                    cx = intrinsic["cx"] * factor
+                    cy = intrinsic["cy"] * factor
 
                 direction = get_ray_directions(w, h, fx, fy, cx, cy).to(
                     self.rank
@@ -383,6 +410,7 @@ class ColmapDatasetBase():
                     img = img.to(
                         self.rank
                     ) if self.config.load_data_on_gpu else img.cpu()
+                    vis_mask = torch.ones_like(img[..., 0], device=img.device)
                     if self.apply_mask:
                         mask_path = os.path.join(
                             mask_dir, fns[i].split("/")[-1][:-3] + 'png')
@@ -443,6 +471,7 @@ class ColmapDatasetBase():
                         depth = torch.zeros_like(img[..., 0],
                                                  device=img.device)  # (h, w)
                         depth_mask = (depth > 0.0).to(bool)
+                    all_vis_masks.append(vis_mask)
                     all_fg_masks.append(mask)  # (h, w)
                     all_images.append(img)
                     all_depths.append(depth)  # (h, w)
@@ -451,7 +480,14 @@ class ColmapDatasetBase():
             directions = torch.stack(directions, dim=0)
             all_c2w = torch.tensor(all_c2w)[:, :3]
             all_c2w[:, :, 1:3] *= -1.  # COLMAP => OpenGL
-            if self.config.pcd_path is not None:
+            if self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
+                pts3d = []
+                pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
+                for id_pts, pts_frame in pts3d_frames.items():
+                    pts3d.append(np.array(pts_frame))
+                pts3d = np.vstack(pts3d)[:, :3]
+                pts3d = torch.from_numpy(pts3d).float()
+            elif self.config.pcd_path is not None:
                 assert os.path.isfile(self.config.pcd_path)
                 import open3d as o3d
                 pts3d = np.asarray(
@@ -501,6 +537,7 @@ class ColmapDatasetBase():
                 'pts3d': pts3d,
                 'all_c2w': all_c2w,
                 'all_images': all_images,
+                'all_vis_masks': all_vis_masks,
                 'all_fg_masks': all_fg_masks,
                 'all_depths': all_depths,
                 'all_depth_masks': all_depth_masks,
@@ -522,6 +559,9 @@ class ColmapDatasetBase():
             self.all_images = torch.zeros(
                 (self.config.n_test_traj_steps, self.h, self.w, 3),
                 dtype=torch.float32)
+            self.all_vis_masks = torch.ones(
+                (self.config.n_test_traj_steps, self.h, self.w),
+                dtype=torch.float32)
             self.all_fg_masks = torch.zeros(
                 (self.config.n_test_traj_steps, self.h, self.w),
                 dtype=torch.float32)
@@ -532,8 +572,9 @@ class ColmapDatasetBase():
                 (self.config.n_test_traj_steps, self.h, self.w),
                 dtype=torch.bool)
         else:
-            self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks = torch.stack(
+            self.all_images, self.all_vis_masks, self.all_fg_masks, self.all_depths, self.all_depth_masks = torch.stack(
                 self.all_images, dim=0).float(), torch.stack(
+                    self.all_vis_masks, dim=0).float(), torch.stack(
                     self.all_fg_masks, dim=0).float(), torch.stack(
                         self.all_depths,
                         dim=0).float(), torch.stack(self.all_depth_masks,
