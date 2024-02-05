@@ -22,17 +22,11 @@ import copy
 import logging
 import numpy as np
 import argparse
-"""
-try:
-    import R3DParser
-except:
-    import R3DUtil
-"""
 import pyransac3d as pyrsc
 
 
 def bin2camera(work_space, bin_file):
-    """convert r3d bin data to cmaera ex/intrinsics"""
+    """convert r3d bin data to camera ex/intrinsics"""
     try:
         cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DParser.LoadR3DBinDataset(work_space, bin_file)
     except:
@@ -337,20 +331,28 @@ class ColmapDatasetBase():
                 fns = sorted(os.listdir(os.path.join(self.config.root_dir,
                                     'images'))) 
                 fns = [os.path.join(self.config.root_dir, 'images', fn) for fn in fns]
-            mask_ori_dir = os.path.join(self.config.root_dir, 'Mask')
+            mask_ori_dir = os.path.join(self.config.root_dir, 'sky_mask')
             has_mask = os.path.exists(
                 mask_ori_dir)  # TODO: support partial masks
             self.apply_mask = has_mask and self.config.apply_mask
             self.apply_depth = self.config.apply_depth
             mask_dir = os.path.join(self.config.root_dir,
-                                    f'Mask_{self.config.img_downscale}')
+                                    f'sky_mask_{self.config.img_downscale}')
+            vis_mask_dir = os.path.join(self.config.root_dir,
+                                    f'vis_mask')
 
             all_images, all_vis_masks, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], [], []
 
+            print(colored('Remember to deal with the unique dimention of rear images', 'yellow'))
             for i, d in enumerate(all_c2w):
                 if isinstance(intrinsics[i], np.ndarray):
                     W = 3840
                     H = 2160
+                    """
+                    if (i + 1) % 6 == 0:
+                        W /= 2
+                        H /= 2
+                    """
                     if 'img_wh' in self.config:
                         w, h = self.config.img_wh
                     else:
@@ -358,7 +360,8 @@ class ColmapDatasetBase():
                         w, h = int(W * factor), int(H * factor)
                     img_wh = (w, h)
                     intrinsic = intrinsics[i]
-                    fx = fy = (intrinsic[0,0] + intrinsic[1,1]) / 2.0 * factor  # camdata[1].params[0] * factor
+                    fx = intrinsic[0, 0] * factor  # camdata[1].params[0] * factor
+                    fy = intrinsic[1, 1] * factor  # camdata[1].params[0] * factor
                     cx = intrinsic[0, 2] * factor
                     cy = intrinsic[1, 2] * factor
                 else:
@@ -388,6 +391,7 @@ class ColmapDatasetBase():
                 ) if self.config.load_data_on_gpu else get_ray_directions(
                     w, h, fx, fy, cx, cy).cpu()
                 directions.append(direction)
+
                 if self.split in ['train', 'val']:
                     idx_tmp = fns[i].replace(self.config.root_dir,
                                              '')[1:].rfind('/')
@@ -411,6 +415,18 @@ class ColmapDatasetBase():
                         self.rank
                     ) if self.config.load_data_on_gpu else img.cpu()
                     vis_mask = torch.ones_like(img[..., 0], device=img.device)
+                    # NOTE: Lixiang rear camera should be ignored
+                    # NOTE: visual masks    
+                    vis_mask_path = os.path.join(
+                        vis_mask_dir, 'mask' + fns[i].split("/")[-1][6:-3] + 'png')
+                    vis_mask = Image.open(vis_mask_path)
+                    if vis_mask.size[0] != w or vis_mask.size[1] != h:
+                        vis_mask = vis_mask.resize(img_wh, Image.BICUBIC)
+                    vis_mask = TF.to_tensor(vis_mask)[0]
+                    if (i + 1) % 6 == 0:
+                        vis_mask = torch.zeros_like(img[..., 0], device=img.device)
+
+                    # NOTE: foreground masks    
                     if self.apply_mask:
                         mask_path = os.path.join(
                             mask_dir, fns[i].split("/")[-1][:-3] + 'png')
@@ -419,7 +435,7 @@ class ColmapDatasetBase():
                         if not os.path.exists(mask_path):
                             os.makedirs(os.path.join(
                                 self.config.root_dir,
-                                f"Mask_{self.config.img_downscale}"),
+                                f"sky_mask_{self.config.img_downscale}"),
                                         exist_ok=True)
                             mask_path = os.path.join(
                                 mask_ori_dir,
@@ -430,14 +446,18 @@ class ColmapDatasetBase():
                             mask.save(
                                 os.path.join(
                                     self.config.root_dir,
-                                    f"Mask_{self.config.img_downscale}",
+                                    f"sky_mask_{self.config.img_downscale}",
                                     fns[i].split("/")[-1][:-3] + 'png'))
-                        mask = TF.to_tensor(mask)[0] * 255
+                        mask = TF.to_tensor(mask)[0] # * 255
                         mask_fg = torch.ones_like(mask, device=img.device)
+                        mask_fg[mask == 1.] = 0
+                        """
+                        mask = TF.to_tensor(mask)[0] * 255
                         mask_fg[mask == 20] = 0
                         mask_fg[mask == 80] = 0
                         mask_fg[mask == 83] = 0
                         mask_fg[mask == 102] = 0
+                        """
                         mask = mask_fg
                     else:
                         mask = torch.ones_like(img[..., 0], device=img.device)
@@ -524,6 +544,9 @@ class ColmapDatasetBase():
                 print(colored(get_center(pts3d), 'blue'))
                 all_c2w[:, :, 3] -= get_center(pts3d)
                 pts3d -= get_center(pts3d)
+                R = torch.tensor([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+                t = -get_center(pts3d)
+                scale = self.config.cam_downscale
 
             ColmapDatasetBase.properties = {
                 'w': w,

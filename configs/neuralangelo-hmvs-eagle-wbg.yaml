@@ -1,4 +1,4 @@
-name: neus-hmvs-${basename:${dataset.root_dir}}
+name: na-hmvs-${basename:${dataset.root_dir}}
 tag: ""
 seed: 42
 
@@ -6,22 +6,23 @@ dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/Buildings
   pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
-  pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
-  mesh_exported_path: false
+  pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply
+  mesh_outpath: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 17 # if false, to rescale the cameras/pts positions automatically
-  repose: true
-  up_est_method: ground # z-axis # camera/ground/z-axis 
+  cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
+  repose: true # false
+  up_est_method: no-change # camera/ground/z-axis 
   center_est_method: point # camera/point
-  n_test_traj_steps: 4
+  n_test_traj_steps: 16
   apply_mask: false
+  apply_depth: false
   load_data_on_gpu: false
-  max_imgs: 600
+  max_imgs: 1600
 
 model:
   name: neus
   radius: 1.0
-  num_samples_per_ray: 4096
+  num_samples_per_ray: 1024 # 4096
   train_num_rays: 256
   max_train_num_rays: 8192
   grid_prune: true
@@ -42,10 +43,10 @@ model:
     feature_dim: 13
     sdf2weight: hf_neus
     geometric_bias_remove: false # refer to D-NeuS
-    grad_type: analytic
+    grad_type: finite_difference
     isosurface:
       method: mc
-      resolution: 768
+      resolution: 768 # 1536
       chunk: 2097152 # 128**3
       threshold: 0.
     xyz_encoding_config:
@@ -58,7 +59,7 @@ model:
       include_xyz: true
       start_level: 4
       start_step: 0
-      update_steps: 2000
+      update_steps: 2000 # Don't set it larger then 2000, otherwise smoothness will be harmed, refer to NeuS2
     mlp_network_config:
       otype: VanillaMLP
       activation: ReLU
@@ -68,8 +69,9 @@ model:
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
+    finite_difference_eps: progressive
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 16
     use_distortion: false
@@ -90,7 +92,7 @@ model:
     max_imgs: ${dataset.max_imgs}
     use_appearance_embedding: true
     use_average_appearance_embedding: ture
-    appearance_embedding_dim: 32
+    appearance_embedding_dim: 16
   # background model configurations
   num_samples_per_ray_bg: 256
   geometry_bg:
@@ -129,24 +131,27 @@ model:
     max_imgs: ${dataset.max_imgs}
     use_appearance_embedding: true
     use_average_appearance_embedding: ture
-    appearance_embedding_dim: 32
+    appearance_embedding_dim: 8
 
 system:
   name: neus-system
   loss:
     lambda_rgb_mse: 1.
     lambda_rgb_l1: 1.
+    lambda_rgb_cos: 0.
     lambda_mask: 0.0
+    lambda_depth_l1: 0.0 # [5e3, 0.0, 1.0, 1e5]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
-    lambda_curvature: 0 # topology warmup
+    lambda_curvature: 5e-4 # topology warmup
+    curvature_warmup_steps: ${model.geometry.xyz_encoding_config.update_steps}
     lambda_sparsity: 0.0
     sparsity_scale: 1.
     lambda_distortion: 1e-4
     lambda_distortion_bg: 0.0
     lambda_opaque: 1e-2
     lambda_entropy: 1e-4
-    lambda_surface_bias: 0.0 # [5e3, 0.0, 0.1, 1e5] # refer to D-NeuS
+    lambda_surface_bias: 0.0 # [2e3, 0.0, 0.1, 5e4] # refer to D-NeuS
   optimizer:
     name: AdamW
     args:
@@ -189,11 +194,11 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 1e5
+  max_steps: 8e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5e4
+  val_check_interval: 5e3 # 4e4
   limit_train_batches: 1.0
-  limit_val_batches: 2
+  limit_val_batches: 8 # 2
   enable_progress_bar: true
   precision: 16

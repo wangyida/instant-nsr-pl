@@ -54,7 +54,7 @@ class NeRFSystem(BaseSystem):
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
             depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depths_mask[index, y, x].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depth_masks[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -65,7 +65,7 @@ class NeRFSystem(BaseSystem):
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
             depth = self.dataset.all_depths[index].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depths_mask[index].view(-1).to(self.rank)
+            depth_mask = self.dataset.all_depth_masks[index].view(-1).to(self.rank)
         
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 

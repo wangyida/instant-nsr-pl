@@ -1,7 +1,9 @@
 from termcolor import colored
 import sys
+import importlib.util
 
 datasets = {}
+
 
 def register(name):
 
@@ -14,20 +16,26 @@ def register(name):
 
 def make(name, config):
     if name == "hmvs":
-        try:
-            try:
-                import R3DParser
-            except:
-                import R3DUtil
-        except:
+        found_opt1 = importlib.util.find_spec("R3DParser") is not None
+        found_opt2 = importlib.util.find_spec("R3DUtil") is not None
+        if found_opt1:
+            import R3DParser
+        elif found_opt2:
+            import R3DUtil
+        else:
             print(
+                "In case you are deploying on", colored("STARMAP platform,",
+                        'blue'), "compiled parsers such as",
+                colored("'R3DParser' or 'R3DUtils'", 'yellow'),
+                "should be explicitly included")
+            print(
+                "and redirected -",
                 colored(
-                    "'R3DParser' or 'R3DUtils' should be explicitly included in case you are deploying on Starmap",
-                    'yellow'))
-            print("solution: export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/")
+                    "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/",
+                    'blue'))
         from . import hmvs
-            # sys.exit()
     dataset = datasets[name](config)
     return dataset
+
 
 from . import blender, colmap, dtu
