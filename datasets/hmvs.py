@@ -325,8 +325,14 @@ class ColmapDatasetBase():
                                                       self.config.pose_path)
             except:
                 all_c2w, intrinsics = np.load(os.path.join(self.config.root_dir,
-                                    'extrinsics.npy')), np.load(os.path.join(self.config.root_dir,
-                                    'intrinsics.npy'))
+                                    'extrinsics.npy'), allow_pickle=True), np.load(os.path.join(self.config.root_dir,
+                                    'intrinsics.npy'), allow_pickle=True)
+                try:
+                    all_c2w = all_c2w[()]['FRONT']
+                    intrinsics = intrinsics[()]['FRONT']
+                    print(colored('Using front camera alone', 'blue'))
+                except:
+                    print(colored('Using all available cameras', 'blue'))
                 fns = sorted(os.listdir(os.path.join(self.config.root_dir,
                                     'images'))) 
                 fns = [os.path.join(self.config.root_dir, 'images', fn) for fn in fns]
@@ -371,7 +377,7 @@ class ColmapDatasetBase():
 
                 mesh_dir = os.path.join(self.config.root_dir, 'mesh_exp')
                 os.makedirs(mesh_dir, exist_ok=True)
-                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh.ply')
+                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
                 # Poisson surface on top of given GT points
                 if not os.path.exists(mesh_poisson_path):
                     print(colored(
@@ -384,8 +390,9 @@ class ColmapDatasetBase():
                     print('run Poisson surface reconstruction')
                     with o3d.utility.VerbosityContextManager(
                             o3d.utility.VerbosityLevel.Debug) as cm:
+                        # Poisson
                         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                            pcd, depth=9)
+                            pcd, depth=10, linear_fit=True)
                     o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
                 # Open3D mesh
                 mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
@@ -467,24 +474,26 @@ class ColmapDatasetBase():
                     img = img.to(
                         self.rank
                     ) if self.config.load_data_on_gpu else img.cpu()
-                    vis_mask = torch.ones_like(img[..., 0], device=img.device)
                     # NOTE: Lixiang rear camera should be ignored
                     # NOTE: visual masks    
                     vis_mask_path = os.path.join(
                         vis_mask_dir, 'mask' + fns[i].split("/")[-1][6:-3] + 'png')
-                    if not os.path.exists(vis_mask_path):
+                    if not os.path.exists(vis_mask_path) and os.path.exists(vis_mask_path.replace(f"{vis_mask_dir}",f"{vis_mask_ori_dir}")):
                         os.makedirs(os.path.dirname(vis_mask_path), exist_ok=True)
                         vis_mask_path = vis_mask_path.replace(
                             f"{vis_mask_dir}",
                             f"{vis_mask_ori_dir}")
-                    vis_mask = Image.open(vis_mask_path)
-                    if vis_mask.size[0] != w or vis_mask.size[1] != h:
-                        vis_mask = vis_mask.resize(img_wh, Image.NEAREST)
-                        vis_mask_path = vis_mask_path.replace(
-                            f"{vis_mask_ori_dir}",
-                            f"{vis_mask_dir}")
-                        vis_mask.save(vis_mask_path)
-                    vis_mask = TF.to_tensor(vis_mask)[0]
+                    if os.path.exists(vis_mask_path):
+                        vis_mask = Image.open(vis_mask_path)
+                        if vis_mask.size[0] != w or vis_mask.size[1] != h:
+                            vis_mask = vis_mask.resize(img_wh, Image.NEAREST)
+                            vis_mask_path = vis_mask_path.replace(
+                                f"{vis_mask_ori_dir}",
+                                f"{vis_mask_dir}")
+                            vis_mask.save(vis_mask_path)
+                        vis_mask = TF.to_tensor(vis_mask)[0]
+                    else:
+                        vis_mask = torch.ones_like(img[..., 0], device=img.device)
                     # The unusual
                     """
                     if (i + 1) % 6 == 0:
@@ -508,35 +517,6 @@ class ColmapDatasetBase():
                                 f"{dynamic_mask_dir}")
                             dynamic_mask.save(dynamic_mask_path)
                         vis_mask *= (1 - TF.to_tensor(dynamic_mask)[0])
-
-                    # NOTE: foreground masks    
-                    if self.apply_mask:
-                        mask_path = os.path.join(
-                            mask_dir, fns[i].split("/")[-1][:-3] + 'png')
-                        # mask_paths = list(filter(os.path.exists, mask_paths))
-                        # assert len(mask_paths) == 1
-                        if not os.path.exists(mask_path):
-                            os.makedirs(os.path.join(
-                                self.config.root_dir,
-                                f"sky_mask_{self.config.img_downscale}"),
-                                        exist_ok=True)
-                            mask_path = os.path.join(
-                                mask_ori_dir,
-                                fns[i].split("/")[-1][:-3] + 'png')
-                        mask = Image.open(mask_path)  # (H, W, 1)
-                        if mask.size[0] != w or mask.size[1] != h:
-                            mask = mask.resize(img_wh, Image.NEAREST)
-                            mask.save(
-                                os.path.join(
-                                    self.config.root_dir,
-                                    f"sky_mask_{self.config.img_downscale}",
-                                    fns[i].split("/")[-1][:-3] + 'png'))
-                        mask = TF.to_tensor(mask)[0] # TF.pil_to_tensor does not rescale the input PIL mask
-                        mask_fg = torch.ones_like(mask, device=img.device)
-                        mask_fg[mask == 1] = 0 # check whether we use 1 or 255
-                        mask = mask_fg
-                    else:
-                        mask = torch.ones_like(img[..., 0], device=img.device)
 
                     depth_folder = 'lidar_depth'
                     if self.apply_depth and os.path.exists(fns[i].replace(f"{img_folder}", f"/{depth_folder}")):
@@ -619,11 +599,47 @@ class ColmapDatasetBase():
                     depth_rast = Image.fromarray(rays_rast['t_hit'].numpy())
                     depth_rast = TF.pil_to_tensor(depth_rast).permute(
                         1, 2, 0) / self.config.cam_downscale
+                    inf_mask = (depth_rast == float("Inf"))
                     depth_rast[depth_rast == float("Inf")] = 0
                     depth_rast = depth_rast.to(
                         self.rank
                     ) if self.config.load_data_on_gpu else depth_rast.cpu()
                     depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
+
+                    # NOTE: foreground masks    
+                    if self.apply_mask:
+                        mask_path = os.path.join(
+                            mask_dir, fns[i].split("/")[-1][:-3] + 'png')
+                        # mask_paths = list(filter(os.path.exists, mask_paths))
+                        # assert len(mask_paths) == 1
+                        if not os.path.exists(mask_path):
+                            os.makedirs(os.path.join(
+                                self.config.root_dir,
+                                f"sky_mask_{self.config.img_downscale}"),
+                                        exist_ok=True)
+                            mask_path = os.path.join(
+                                mask_ori_dir,
+                                fns[i].split("/")[-1][:-3] + 'png')
+                        if os.path.exists(mask_path):
+                            mask = Image.open(mask_path)  # (H, W, 1)
+                            if mask.size[0] != w or mask.size[1] != h:
+                                mask = mask.resize(img_wh, Image.NEAREST)
+                                mask.save(
+                                    os.path.join(
+                                        self.config.root_dir,
+                                        f"sky_mask_{self.config.img_downscale}",
+                                        fns[i].split("/")[-1][:-3] + 'png'))
+                            mask = TF.to_tensor(mask)[0] # TF.pil_to_tensor does not rescale the input PIL mask
+                            mask_fg = torch.ones_like(mask, device=img.device)
+                            mask_fg[mask == 1] = 0 # check whether we use 1 or 255
+                            mask = mask_fg
+                        elif inf_mask is not None:
+                            mask = (1 - inf_mask.to(int)).to(bool)
+                        else:
+                            print(colored('Foreground mask not available, need to disable apply_mask', 'red'))
+                    else:
+                        mask = torch.ones_like(img[..., 0], device=img.device)
+
 
                     all_vis_masks.append(vis_mask)
                     all_fg_masks.append(mask)  # (h, w)
@@ -635,7 +651,7 @@ class ColmapDatasetBase():
             o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'), pts_clt)
 
             directions = torch.stack(directions, dim=0)
-            all_c2w = torch.tensor(all_c2w)[:, :3]
+            all_c2w = torch.tensor(all_c2w)[:, :3].float()
             all_c2w[:, :, 1:3] *= -1.  # COLMAP => OpenGL
 
             if self.config.repose:
@@ -756,7 +772,7 @@ class ColmapDatasetBase():
         exit(1)
         """
 
-        self.all_c2w = self.all_c2w.float().to(self.rank)
+        self.all_c2w = self.all_c2w.to(self.rank)
         if self.config.load_data_on_gpu:
             self.all_images = self.all_images.to(self.rank)
             self.all_fg_masks = self.all_fg_masks.to(self.rank)
