@@ -9,11 +9,11 @@ dataset:
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply
   mesh_outpath: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
+  cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
-  up_est_method: no-change # camera/ground/z-axis 
+  up_est_method: ground # camera/ground/z-axis 
   center_est_method: point # camera/point
-  n_test_traj_steps: 16
+  n_test_traj_steps: 60
   apply_mask: false
   apply_depth: false
   load_data_on_gpu: false
@@ -52,8 +52,8 @@ model:
     xyz_encoding_config:
       otype: ProgressiveBandHashGrid
       n_levels: 16
-      n_features_per_level: 8
-      log2_hashmap_size: 22
+      n_features_per_level: 4 # 8
+      log2_hashmap_size: 20 # 22
       base_resolution: 32
       per_level_scale: 1.3195079107728942
       include_xyz: true
@@ -66,7 +66,7 @@ model:
       output_activation: none
       n_neurons: 64
       n_hidden_layers: 1
-      sphere_init: true
+      sphere_init: false # true
       sphere_init_radius: 0.5
       weight_norm: true
     finite_difference_eps: progressive
@@ -140,7 +140,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
-    lambda_depth_l1: 0.0 # [5e3, 0.0, 1.0, 1e5]
+    lambda_depth_l1: [5e3, 1.0, 0.1, 8e4] # [5e3, 0.0, 1.0, 1e5]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 5e-4 # topology warmup
@@ -194,11 +194,11 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 8e4
+  max_steps: 4e4 # 8e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5e3 # 4e4
+  val_check_interval: 5e3
   limit_train_batches: 1.0
-  limit_val_batches: 8 # 2
+  limit_val_batches: 3
   enable_progress_bar: true
   precision: 16

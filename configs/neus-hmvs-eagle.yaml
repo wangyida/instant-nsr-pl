@@ -9,7 +9,7 @@ dataset:
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
+  cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: no-change # camera/ground/z-axis 
   center_est_method: point # camera/point
@@ -46,7 +46,7 @@ model:
     grad_type: analytic
     isosurface:
       method: mc
-      resolution: 768 # 1536
+      resolution: 1024 # 1536
       chunk: 2097152 # 128**3
       threshold: 0.
     xyz_encoding_config:
@@ -100,7 +100,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.1
-    lambda_depth_l1: 0.0 # [5e3, 0.0, 1.0, 1e5]
+    lambda_depth_l1: [5e3, 0.0, 1.0, 1e5]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 0.0 # topology warmup
@@ -151,8 +151,8 @@ trainer:
   max_steps: 8e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 2e4 # 4e4
+  val_check_interval: 5e3 # 4e4
   limit_train_batches: 1.0
-  limit_val_batches: 8 # 2
+  limit_val_batches: 6 # 2
   enable_progress_bar: true
   precision: 16

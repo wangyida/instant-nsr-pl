@@ -43,45 +43,54 @@ class BlenderDatasetBase():
         
         self.w, self.h = w, h
         self.img_wh = (self.w, self.h)
-        factor = w / W
+        self.factor = w / W
 
         self.near, self.far = self.config.near_plane, self.config.far_plane
 
         try:
-            self.focal_x = meta['fl_x'] * factor
-            self.focal_y = meta['fl_y'] * factor
-            self.cx = meta['cx'] * factor
-            self.cy = meta['cy'] * factor
+            self.focal_x = meta['fl_x'] * self.factor
+            self.focal_y = meta['fl_y'] * self.factor
+            self.cx = meta['cx'] * self.factor
+            self.cy = meta['cy'] * self.factor
         except:
-            self.focal_x = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) * factor # scaled focal length
+            self.focal_x = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) * self.factor # scaled focal length
             self.focal_y = self.focal_x
-            self.cx = self.w//2 * factor
-            self.cy = self.h//2 * factor
+            self.cx = self.w//2 * self.factor
+            self.cy = self.h//2 * self.factor
 
         try:
             self.k1 = meta['k1']
             self.k2 = meta['k2']
+            self.p1 = meta['p1']
+            self.p2 = meta['p2']
             self.k3 = meta['k3']
             self.k4 = meta['k4']
         except:
             self.k1 = 0.0
             self.k2 = 0.0
+            self.p1 = 0.0
+            self.p2 = 0.0
             self.k3 = 0.0
             self.k4 = 0.0
 
         # ray directions for all pixels, same for all images (same H, W, focal)
-        self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).cpu() # (h, w, 3)
+        self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).to(self.rank)
+        if not self.config.load_data_on_gpu: 
+            self.directions = self.directions.cpu() # (h, w, 3)
 
         self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks, self.all_vis_masks = [], [], [], [], [], []
 
+        import open3d as o3d
+        pts_clt = o3d.geometry.PointCloud()
         for i, frame in enumerate(meta['frames']):
-            c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
+            c2w_npy = np.array(frame['transform_matrix'])
+            c2w = torch.from_numpy(c2w_npy[:3, :4])
             self.all_c2w.append(c2w)
 
             img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}.png")
             img = Image.open(img_path)
             img = img.resize(self.img_wh, Image.BICUBIC)
-            img = TF.to_tensor(img).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
+            img = TF.pil_to_tensor(img).permute(1, 2, 0) / 255.0 # (4, h, w) => (h, w, 4 ) and normalize it
             img = img.to(self.rank) if self.config.load_data_on_gpu else img.cpu()
 
             # load the estimated or recorded depth map
@@ -90,10 +99,39 @@ class BlenderDatasetBase():
                 if depth_path.split('.')[-1] == 'tiff':
                     depth = Image.open(depth_path).convert('I')
                     depth = depth.resize(self.img_wh, Image.BICUBIC)
-                    depth = TF.to_tensor(depth).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
-                    depth = (depth / (2**16-1) * 100)[..., -1] / 27.222561594202872
+                    depth = Image.fromarray(np.array(depth).astype("uint16") / (2**16-1) * 100)
+                    depth = TF.pil_to_tensor(depth).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
+                    depth = depth[..., -1] # / 27.222561594202872 # like cam_downscale
                 elif depth_path.split('.')[-1] == 'pth':
                     depth = torch.load(depth_path)[...,3]
+                depth /= self.config.cam_downscale
+
+                # saving point cloud form depth
+                dep_max = 5.0 # lidar limit
+                import open3d as o3d
+                import cv2
+                if depth.max() != 0.0:
+                    # depth_o3d = o3d.geometry.Image(depth.numpy() * self.config.cam_downscale)
+                    intrin_mtx =  np.array([[self.focal_x, 0, self.cx], [0, self.focal_y, self.cy], [0, 0, 1]])
+                    distort = np.array([self.k1, self.k2, self.p1, self.p2, self.k3, self.k4, 0, 0])
+                    depth_o3d = o3d.geometry.Image(cv2.undistort(depth.numpy(), intrin_mtx, distort))
+                    img_o3d = o3d.geometry.Image(cv2.undistort(img.numpy(), intrin_mtx, distort))
+                    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                        img_o3d,
+                        depth_o3d,
+                        depth_trunc=dep_max-0.01,
+                        depth_scale=1,
+                        convert_rgb_to_intensity=False)
+                    intrin_o3d = o3d.camera.PinholeCameraIntrinsic(
+                        w, h, self.focal_x, self.focal_y, self.cx, self.cy)
+                    # Open3D uses world-to-camera extrinsics
+                    c2w_npy[:3, 1:3] *= -1.  # COLMAP => OpenGL
+                    pts_frm = o3d.geometry.PointCloud.create_from_depth_image(
+                        depth_o3d, intrinsic=intrin_o3d, extrinsic=np.linalg.inv(c2w_npy), depth_scale=1)
+                    # o3d.io.write_point_cloud(f"./test/layout_depth_frame_{str(i + 1)}.ply", pts_frm)
+                    pts_clt.points = (o3d.utility.Vector3dVector(
+                        np.concatenate((np.array(pts_clt.points), np.array(pts_frm.points)),
+                                       axis=0)))
             else:
                 depth = None
 
@@ -102,13 +140,13 @@ class BlenderDatasetBase():
                     mask_path = os.path.join(self.config.root_dir, f"{frame['mask_path']}")
                     mask = Image.open(mask_path).convert('I')
                     mask = mask.resize(self.img_wh, Image.BICUBIC)
+                    # mask is either 0 or 1
                     mask = TF.to_tensor(mask).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
                 elif img.shape[-1] == 4:
                     mask = img[..., -1]
                 elif depth is not None:
-                    # mask = torch.ones_like(img[...,0], device=img.device)
-                    # mask[depth[...,0] == 0] = 0.0
-                    mask = (depth > 0.0).to(bool)
+                    mask = torch.ones_like(img[...,0], device=img.device)
+                    # mask = (depth > 0.0).to(bool)
                 mask = mask.to(self.rank) if self.config.load_data_on_gpu else mask.cpu()
                 self.all_fg_masks.append(mask) # (h, w)
             else:
@@ -132,8 +170,7 @@ class BlenderDatasetBase():
                         print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
                         self.all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
                 else:
-                    depth_mask = torch.ones_like(img[...,0], device=img.device)
-                    depth_mask[depth == 0] = 0
+                    depth_mask = (depth > 0.0).to(bool)
                     self.all_depth_masks.append(depth_mask)
             else:
                 self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
@@ -146,6 +183,9 @@ class BlenderDatasetBase():
             else:
                 vis_mask = torch.ones_like(img[...,0], device=img.device)
             self.all_vis_masks.append(vis_mask)
+
+        # pts_clt = pts_clt.voxel_down_sample(voxel_size=0.01)
+        o3d.io.write_point_cloud("./test/layout_depth_clt.ply", pts_clt)
 
         self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks, self.all_vis_masks = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \

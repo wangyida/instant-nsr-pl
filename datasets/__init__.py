@@ -25,11 +25,12 @@ def make(name, config):
         else:
             print(
                 "In case you are deploying on", colored("STARMAP platform,",
-                        'blue'), "compiled parsers such as",
-                colored("'R3DParser' or 'R3DUtils'", 'yellow'),
-                "should be explicitly included")
+                        'yellow'), "compiled parsers such as",
+                colored("'R3DUtils'", 'yellow'), "or",
+                colored("'R3DParser'", 'yellow'),
+                "should be explicitly included.")
             print(
-                "and redirected -",
+                "try -",
                 colored(
                     "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/",
                     'blue'))

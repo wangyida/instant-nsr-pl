@@ -321,7 +321,6 @@ class ColmapDatasetBase():
                 except:
                     import R3DUtil
                 assert os.path.isfile(self.config.pose_path)
-                # NOTE: self.config.root_dir determines the 'WorkSpace' used in parser
                 all_c2w, intrinsics, fns = bin2camera(self.config.root_dir,
                                                       self.config.pose_path)
             except:
@@ -331,19 +330,70 @@ class ColmapDatasetBase():
                 fns = sorted(os.listdir(os.path.join(self.config.root_dir,
                                     'images'))) 
                 fns = [os.path.join(self.config.root_dir, 'images', fn) for fn in fns]
-            mask_ori_dir = os.path.join(self.config.root_dir, 'sky_mask')
-            has_mask = os.path.exists(
-                mask_ori_dir)  # TODO: support partial masks
-            self.apply_mask = has_mask and self.config.apply_mask
+            self.apply_mask = self.config.apply_mask
             self.apply_depth = self.config.apply_depth
+            mask_ori_dir = os.path.join(self.config.root_dir, 'sky_mask')
             mask_dir = os.path.join(self.config.root_dir,
                                     f'sky_mask_{self.config.img_downscale}')
+            # masks labling invalid regions
+            vis_mask_ori_dir = os.path.join(self.config.root_dir, f'vis_mask')
             vis_mask_dir = os.path.join(self.config.root_dir,
-                                    f'vis_mask')
+                                    f'vis_mask_{self.config.img_downscale}')
+            # masks labling dynamic objects
+            dynamic_mask_ori_dir = os.path.join(self.config.root_dir, f'moving_vehicle_bound')
+            dynamic_mask_dir = os.path.join(self.config.root_dir,
+                                    f'moving_vehicle_bound_{self.config.img_downscale}')
 
             all_images, all_vis_masks, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], [], []
 
             print(colored('Remember to deal with the unique dimention of rear images', 'yellow'))
+            # Load point cloud which might be scanned
+            import open3d as o3d
+            if self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
+                pts3d = []
+                pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
+                for id_pts, pts_frame in pts3d_frames.items():
+                    pts3d.append(np.array(pts_frame))
+                pts3d = np.vstack(pts3d)[:, :3]
+            elif self.config.pcd_path is not None:
+                assert os.path.isfile(self.config.pcd_path)
+                pts3d = np.asarray(
+                    o3d.io.read_point_cloud(self.config.pcd_path).points)
+            else:
+                print(colored('sparse point cloud not given', 'red'))
+                pts3d = []
+
+            if pts3d is not None:
+                # NOTE: save the point cloud using point cloud
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(pts3d)
+                pts3d = torch.from_numpy(pts3d).float()
+
+                mesh_dir = os.path.join(self.config.root_dir, 'mesh_exp')
+                os.makedirs(mesh_dir, exist_ok=True)
+                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh.ply')
+                # Poisson surface on top of given GT points
+                if not os.path.exists(mesh_poisson_path):
+                    print(colored(
+                            'Extracting Poisson surface on top of given GT points',
+                            'blue'))
+                    # pcd = pcd.voxel_down_sample(voxel_size=0.002)
+                    pcd.estimate_normals(
+                                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=20))
+                    o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'), pcd)
+                    print('run Poisson surface reconstruction')
+                    with o3d.utility.VerbosityContextManager(
+                            o3d.utility.VerbosityLevel.Debug) as cm:
+                        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                            pcd, depth=9)
+                    o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+                # Open3D mesh
+                mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
+                # Create scene and add the mesh
+                scene = o3d.t.geometry.RaycastingScene()
+                scene.add_triangles(mesh_o3d)
+
+            pts_clt = o3d.geometry.PointCloud()
             for i, d in enumerate(all_c2w):
                 if isinstance(intrinsics[i], np.ndarray):
                     W = 3840
@@ -356,14 +406,15 @@ class ColmapDatasetBase():
                     if 'img_wh' in self.config:
                         w, h = self.config.img_wh
                     else:
-                        factor = 1.0 / self.config.img_downscale
-                        w, h = int(W * factor), int(H * factor)
+                        self.factor = 1.0 / self.config.img_downscale
+                        w, h = int(W * self.factor), int(H * self.factor)
                     img_wh = (w, h)
                     intrinsic = intrinsics[i]
-                    fx = intrinsic[0, 0] * factor  # camdata[1].params[0] * factor
-                    fy = intrinsic[1, 1] * factor  # camdata[1].params[0] * factor
-                    cx = intrinsic[0, 2] * factor
-                    cy = intrinsic[1, 2] * factor
+                    intrinsic[:2,:] *= self.factor
+                    fx = intrinsic[0, 0] # camdata[1].params[0] * self.factor
+                    fy = intrinsic[1, 1] # camdata[1].params[0] * self.factor
+                    cx = intrinsic[0, 2]
+                    cy = intrinsic[1, 2]
                 else:
                     intrinsic = intrinsics[i]
                     H = int(intrinsic["height"])
@@ -379,12 +430,12 @@ class ColmapDatasetBase():
                             "Either img_wh or img_downscale should be specified.")
 
                     img_wh = (w, h)
-                    factor = w / W
+                    self.factor = w / W
 
                     fx = fy = intrinsic[
-                        "f"] * factor  # camdata[1].params[0] * factor
-                    cx = intrinsic["cx"] * factor
-                    cy = intrinsic["cy"] * factor
+                        "f"] * self.factor  # camdata[1].params[0] * self.factor
+                    cx = intrinsic["cx"] * self.factor
+                    cy = intrinsic["cy"] * self.factor
 
                 direction = get_ray_directions(w, h, fx, fy, cx, cy).to(
                     self.rank
@@ -410,7 +461,9 @@ class ColmapDatasetBase():
                     if img.size[0] != w or img.size[1] != h:
                         img = img.resize(img_wh, Image.BICUBIC)
                         img.save(img_path)
-                    img = TF.to_tensor(img).permute(1, 2, 0)[..., :3]
+                    # notice that to_tensor rescale the input in range [0, 1]
+                    # img = TF.to_tensor(img).permute(1, 2, 0)[..., :3]
+                    img = TF.pil_to_tensor(img).permute(1, 2, 0)[..., :3] / 255.0 # (4, h, w) => (h, w, 4 ) and normalize it
                     img = img.to(
                         self.rank
                     ) if self.config.load_data_on_gpu else img.cpu()
@@ -419,12 +472,42 @@ class ColmapDatasetBase():
                     # NOTE: visual masks    
                     vis_mask_path = os.path.join(
                         vis_mask_dir, 'mask' + fns[i].split("/")[-1][6:-3] + 'png')
+                    if not os.path.exists(vis_mask_path):
+                        os.makedirs(os.path.dirname(vis_mask_path), exist_ok=True)
+                        vis_mask_path = vis_mask_path.replace(
+                            f"{vis_mask_dir}",
+                            f"{vis_mask_ori_dir}")
                     vis_mask = Image.open(vis_mask_path)
                     if vis_mask.size[0] != w or vis_mask.size[1] != h:
-                        vis_mask = vis_mask.resize(img_wh, Image.BICUBIC)
+                        vis_mask = vis_mask.resize(img_wh, Image.NEAREST)
+                        vis_mask_path = vis_mask_path.replace(
+                            f"{vis_mask_ori_dir}",
+                            f"{vis_mask_dir}")
+                        vis_mask.save(vis_mask_path)
                     vis_mask = TF.to_tensor(vis_mask)[0]
+                    # The unusual
+                    """
                     if (i + 1) % 6 == 0:
                         vis_mask = torch.zeros_like(img[..., 0], device=img.device)
+                    """
+
+                    # NOTE: dynamic object mask
+                    dynamic_mask_path = os.path.join(
+                        dynamic_mask_dir, fns[i].split("/")[-1][:-3] + 'png')
+                    if not os.path.exists(dynamic_mask_path):
+                        os.makedirs(os.path.dirname(dynamic_mask_path), exist_ok=True)
+                        dynamic_mask_path = dynamic_mask_path.replace(
+                            f"{dynamic_mask_dir}",
+                            f"{dynamic_mask_ori_dir}")
+                    if os.path.exists(dynamic_mask_path):
+                        dynamic_mask = Image.open(dynamic_mask_path)
+                        if dynamic_mask.size[0] != w or dynamic_mask.size[1] != h:
+                            dynamic_mask = dynamic_mask.resize(img_wh, Image.NEAREST)
+                            dynamic_mask_path = dynamic_mask_path.replace(
+                                f"{dynamic_mask_ori_dir}",
+                                f"{dynamic_mask_dir}")
+                            dynamic_mask.save(dynamic_mask_path)
+                        vis_mask *= (1 - TF.to_tensor(dynamic_mask)[0])
 
                     # NOTE: foreground masks    
                     if self.apply_mask:
@@ -442,80 +525,119 @@ class ColmapDatasetBase():
                                 fns[i].split("/")[-1][:-3] + 'png')
                         mask = Image.open(mask_path)  # (H, W, 1)
                         if mask.size[0] != w or mask.size[1] != h:
-                            mask = mask.resize(img_wh, Image.BICUBIC)
+                            mask = mask.resize(img_wh, Image.NEAREST)
                             mask.save(
                                 os.path.join(
                                     self.config.root_dir,
                                     f"sky_mask_{self.config.img_downscale}",
                                     fns[i].split("/")[-1][:-3] + 'png'))
-                        mask = TF.to_tensor(mask)[0] # * 255
+                        mask = TF.to_tensor(mask)[0] # TF.pil_to_tensor does not rescale the input PIL mask
                         mask_fg = torch.ones_like(mask, device=img.device)
-                        mask_fg[mask == 1.] = 0
-                        """
-                        mask = TF.to_tensor(mask)[0] * 255
-                        mask_fg[mask == 20] = 0
-                        mask_fg[mask == 80] = 0
-                        mask_fg[mask == 83] = 0
-                        mask_fg[mask == 102] = 0
-                        """
+                        mask_fg[mask == 1] = 0 # check whether we use 1 or 255
                         mask = mask_fg
                     else:
                         mask = torch.ones_like(img[..., 0], device=img.device)
-                    if self.apply_depth:
-                        depth_folder = 'Depths'
+
+                    depth_folder = 'lidar_depth'
+                    if self.apply_depth and os.path.exists(fns[i].replace(f"{img_folder}", f"/{depth_folder}")):
+                        depth_format = '.npy' # 'tif' 'npy' 'pth' 'png'
                         depth_path = fns[i].replace(
                             f"{img_folder}",
                             f"/{depth_folder}_{self.config.img_downscale}"
-                        ).replace(".jpg", ".tif")
+                        ).replace(".png", depth_format)
                         if not os.path.exists(depth_path):
                             os.makedirs(os.path.dirname(depth_path),
                                         exist_ok=True)
                             depth_path = fns[i].replace(
                                 f"{img_folder}",
-                                f"/{depth_folder}").replace(".jpg", ".tif")
-                        depth = Image.open(depth_path)
+                                f"/{depth_folder}").replace(".png", depth_format)
+                        # loading depth
+                        if depth_format == '.tiff' or depth_format == '.png':
+                            depth = Image.open(depth_path)
+                        elif depth_format == '.npy':
+                            depth = np.load(depth_path)
+                            depth = Image.fromarray(depth)
+                        elif depth_path == '.pth':
+                            depth = torch.load(depth_path)[...,3]
+                            depth = Image.fromarray(depth.numpy())
                         depth_path = fns[i].replace(
                             f"{img_folder}",
                             f"/{depth_folder}_{self.config.img_downscale}"
-                        ).replace(".jpg", ".tif")
+                        ).replace(".png", depth_format)
                         if depth.size[0] != w or depth.size[1] != h:
-                            depth = depth.resize(img_wh, Image.BICUBIC)
-                            depth.save(depth_path)
-                        depth = TF.to_tensor(depth).permute(
+                            depth = depth.resize(img_wh, Image.NEAREST)
+                            # NOTE Problem encountered
+                            if depth_format == '.tif' or depth_format == '.png':
+                                depth.save(depth_path)
+                            elif depth_format == '.npy':
+                                np.save(depth_path, depth)
+                        depth = TF.pil_to_tensor(depth).permute(
                             1, 2, 0) / self.config.cam_downscale
                         depth = depth.to(
                             self.rank
                         ) if self.config.load_data_on_gpu else depth.cpu()
-                        depth_mask = (depth > 0.0).to(bool)
+                    elif self.apply_depth:
+                        print(colored(fns[i].replace(f"{img_folder}", f"/{depth_folder}") + ' does not exist', 'red'))
+                        depth = torch.zeros_like(img[..., 0],
+                                                 device=img.device)  # (h, w)
                     else:
                         depth = torch.zeros_like(img[..., 0],
                                                  device=img.device)  # (h, w)
-                        depth_mask = (depth > 0.0).to(bool)
+                    depth_mask = (depth > 0.0).to(bool)
+
+                    # saving point cloud form depth
+                    dep_max = 300.0 # lidar limit
+                    import open3d as o3d
+                    # if (i + 1) % 6 in [1, 2, 3, 4, 5]: # and (i + 1) < 24:
+                    if depth.max() != 0.0:
+                        depth_o3d = o3d.geometry.Image(depth.numpy() * self.config.cam_downscale)
+                        img_o3d = o3d.geometry.Image(img.numpy())
+                        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                            img_o3d,
+                            depth_o3d,
+                            depth_trunc=dep_max-0.01,
+                            depth_scale=1,
+                            convert_rgb_to_intensity=False)
+                        intrin_o3d = o3d.camera.PinholeCameraIntrinsic(
+                            w, h, fx, fy, cx, cy)
+                        # Open3D uses world-to-camera extrinsics
+                        pts_frm = o3d.geometry.PointCloud.create_from_depth_image(
+                            depth_o3d, intrinsic=intrin_o3d, extrinsic=np.linalg.inv(all_c2w[i]), depth_scale=1)
+                        # o3d.io.write_point_cloud(f"./test/layout_depth_frame_{str(i + 1)}.ply", pts_frm)
+                        pts_clt.points = (o3d.utility.Vector3dVector(
+                            np.concatenate((np.array(pts_clt.points), np.array(pts_frm.points)),
+                                           axis=0)))
+
+                    # Rays are 6D vectors with origin and ray direction.
+                    # Here we use a helper function to create rays
+                    rays_mesh = scene.create_rays_pinhole(intrinsic_matrix=intrinsic, extrinsic_matrix=np.linalg.inv(all_c2w[i]), width_px=w, height_px=h)
+
+                    # Compute the ray intersections.
+                    rays_rast = scene.cast_rays(rays_mesh)
+
+                    # Visualize the hit distance (depth)
+                    depth_rast = Image.fromarray(rays_rast['t_hit'].numpy())
+                    depth_rast = TF.pil_to_tensor(depth_rast).permute(
+                        1, 2, 0) / self.config.cam_downscale
+                    depth_rast[depth_rast == float("Inf")] = 0
+                    depth_rast = depth_rast.to(
+                        self.rank
+                    ) if self.config.load_data_on_gpu else depth_rast.cpu()
+                    depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
+
                     all_vis_masks.append(vis_mask)
                     all_fg_masks.append(mask)  # (h, w)
                     all_images.append(img)
-                    all_depths.append(depth)  # (h, w)
-                    all_depth_masks.append(depth_mask)
+                    all_depths.append(depth_rast)  # (h, w)
+                    all_depth_masks.append(depth_rast_mask)
+
+            # pts_clt = pts_clt.voxel_down_sample(voxel_size=0.01)
+            o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'), pts_clt)
 
             directions = torch.stack(directions, dim=0)
             all_c2w = torch.tensor(all_c2w)[:, :3]
             all_c2w[:, :, 1:3] *= -1.  # COLMAP => OpenGL
-            if self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
-                pts3d = []
-                pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
-                for id_pts, pts_frame in pts3d_frames.items():
-                    pts3d.append(np.array(pts_frame))
-                pts3d = np.vstack(pts3d)[:, :3]
-                pts3d = torch.from_numpy(pts3d).float()
-            elif self.config.pcd_path is not None:
-                assert os.path.isfile(self.config.pcd_path)
-                import open3d as o3d
-                pts3d = np.asarray(
-                    o3d.io.read_point_cloud(self.config.pcd_path).points)
-                pts3d = torch.from_numpy(pts3d).float()
-            else:
-                print(colored('sparse point cloud not given', 'red'))
-                pts3d = []
+
             if self.config.repose:
                 if self.config.center_est_method == 'point':
                     print(
@@ -552,8 +674,8 @@ class ColmapDatasetBase():
                 'w': w,
                 'h': h,
                 'img_wh': img_wh,
-                'factor': factor,
-                'has_mask': has_mask,
+                'factor': self.factor,
+                'has_mask': self.apply_mask,
                 'apply_mask': self.apply_mask,
                 'apply_depth': self.apply_depth,
                 'directions': directions,
@@ -575,8 +697,12 @@ class ColmapDatasetBase():
             setattr(self, k, v)
 
         if self.split == 'test':
+            """
             self.all_c2w = create_spheric_poses(
                 self.all_c2w[:, :, 3], n_steps=self.config.n_test_traj_steps)
+            """
+            idx_test = torch.arange(60)
+            self.all_c2w = self.all_c2w[idx_test*3]
             # NOTE: 300 is a hyper-parameter which determines the zoom-in scale
             # self.all_c2w[:, :, 3] /= (300 / self.config.cam_downscale)
             self.all_images = torch.zeros(

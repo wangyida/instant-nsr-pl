@@ -141,6 +141,7 @@ class NeuSSystem(BaseSystem):
             depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]]
             if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0] and depth_mask.shape[0] == rgb_mse.shape[0]:
                 depth_mask *= (batch['fg_mask'] > 0.5)
+                depth_mask = depth_mask.float()
                 depth_mask *= (rgb_mse / exposure_mse)
             loss_depth_l1 = F.l1_loss(out['sdf0_ray_distance'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
             self.log('train/loss_depth_l1', loss_depth_l1)
@@ -240,7 +241,10 @@ class NeuSSystem(BaseSystem):
         ] if self.config.model.learned_background else []) + [
             {'type': 'grayscale', 'img': out['depth'].view(H, W), 'kwargs': {}},
             {'type': 'rgb', 'img': out['comp_normal'].view(H, W, 3), 'kwargs': {'data_format': 'HWC', 'data_range': (-1, 1)}}
-        ])
+        ] + ([
+            {'type': 'grayscale', 'img': out['sdf0_ray_distance'].view(H, W), 'kwargs': {}},
+            {'type': 'grayscale', 'img': batch['depth'].view(H, W), 'kwargs': {}},
+        ] if self.config.dataset.apply_depth else []))
         return {
             'psnr': psnr,
             'index': batch['index']
