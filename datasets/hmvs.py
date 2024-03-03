@@ -328,6 +328,8 @@ class ColmapDatasetBase():
                                     'extrinsics.npy'), allow_pickle=True), np.load(os.path.join(self.config.root_dir,
                                     'intrinsics.npy'), allow_pickle=True)
                 try:
+                    # all_c2w = np.concatenate((all_c2w[()]['FRONT'], all_c2w[()]['FRONT_LEFT'], all_c2w[()]['FRONT_RIGHT']), axis=0)
+                    # intrinsics = np.concatenate((intrinsics[()]['FRONT'], intrinsics[()]['FRONT_LEFT'], intrinsics[()]['FRONT_RIGHT']), axis=0)
                     all_c2w = all_c2w[()]['FRONT']
                     intrinsics = intrinsics[()]['FRONT']
                     print(colored('Using front camera alone', 'blue'))
@@ -352,7 +354,7 @@ class ColmapDatasetBase():
 
             all_images, all_vis_masks, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], [], []
 
-            print(colored('Remember to deal with the unique dimention of rear images', 'yellow'))
+            print(colored('Remember to deal with the unique dimention of rear images', 'red'))
             # Load point cloud which might be scanned
             import open3d as o3d
             if self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
@@ -374,82 +376,54 @@ class ColmapDatasetBase():
                 pcd = o3d.geometry.PointCloud()
                 pcd.points = o3d.utility.Vector3dVector(pts3d)
                 pts3d = torch.from_numpy(pts3d).float()
-
                 mesh_dir = os.path.join(self.config.root_dir, 'mesh_exp')
                 os.makedirs(mesh_dir, exist_ok=True)
-                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
-                # Poisson surface on top of given GT points
-                if not os.path.exists(mesh_poisson_path):
-                    print(colored(
-                            'Extracting Poisson surface on top of given GT points',
-                            'blue'))
+                if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
                     # pcd = pcd.voxel_down_sample(voxel_size=0.002)
                     pcd.estimate_normals(
                                 search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=20))
                     o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'), pcd)
-                    print('run Poisson surface reconstruction')
+                else:
+                    pcd.normals = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply')).normals
+
+
+                # Poisson surface on top of given GT points
+                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
+                if not os.path.exists(mesh_poisson_path):
+                    print(colored(
+                            '[1] Extracting Poisson surface on top of given GT points',
+                            'blue'))
                     with o3d.utility.VerbosityContextManager(
                             o3d.utility.VerbosityLevel.Debug) as cm:
                         # Poisson
                         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
                             pcd, depth=10, linear_fit=True)
                     o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
-                # Open3D mesh
                 mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
+
+                # Poisson surface on top of given GT points
+                """
+                mesh_bp_path = os.path.join(mesh_dir, 'layout_mesh_bp.ply')
+                if not os.path.exists(mesh_bp_path):
+                    print(colored(
+                            '[2] Extracting ball pivoting surface on top of given GT points',
+                            'blue'))
+                    distances = pcd.compute_nearest_neighbor_distance()
+                    radius = np.max([1.5 * np.mean(distances), 0.02])
+                    # estimate radius for rolling ball
+                    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+                               pcd,
+                               o3d.utility.DoubleVector([radius, radius * 2]))
+                    o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+                mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_bp_path))
+                """
+
                 # Create scene and add the mesh
                 scene = o3d.t.geometry.RaycastingScene()
                 scene.add_triangles(mesh_o3d)
 
             pts_clt = o3d.geometry.PointCloud()
             for i, d in enumerate(all_c2w):
-                if isinstance(intrinsics[i], np.ndarray):
-                    W = 3840
-                    H = 2160
-                    """
-                    if (i + 1) % 6 == 0:
-                        W /= 2
-                        H /= 2
-                    """
-                    if 'img_wh' in self.config:
-                        w, h = self.config.img_wh
-                    else:
-                        self.factor = 1.0 / self.config.img_downscale
-                        w, h = int(W * self.factor), int(H * self.factor)
-                    img_wh = (w, h)
-                    intrinsic = intrinsics[i]
-                    intrinsic[:2,:] *= self.factor
-                    fx = intrinsic[0, 0] # camdata[1].params[0] * self.factor
-                    fy = intrinsic[1, 1] # camdata[1].params[0] * self.factor
-                    cx = intrinsic[0, 2]
-                    cy = intrinsic[1, 2]
-                else:
-                    intrinsic = intrinsics[i]
-                    H = int(intrinsic["height"])
-                    W = int(intrinsic["width"])
-
-                    if 'img_wh' in self.config:
-                        w, h = self.config.img_wh
-                    elif 'img_downscale' in self.config:
-                        w, h = int(W / self.config.img_downscale +
-                                   0.5), int(H / self.config.img_downscale + 0.5)
-                    else:
-                        raise KeyError(
-                            "Either img_wh or img_downscale should be specified.")
-
-                    img_wh = (w, h)
-                    self.factor = w / W
-
-                    fx = fy = intrinsic[
-                        "f"] * self.factor  # camdata[1].params[0] * self.factor
-                    cx = intrinsic["cx"] * self.factor
-                    cy = intrinsic["cy"] * self.factor
-
-                direction = get_ray_directions(w, h, fx, fy, cx, cy).to(
-                    self.rank
-                ) if self.config.load_data_on_gpu else get_ray_directions(
-                    w, h, fx, fy, cx, cy).cpu()
-                directions.append(direction)
-
                 if self.split in ['train', 'val']:
                     idx_tmp = fns[i].replace(self.config.root_dir,
                                              '')[1:].rfind('/')
@@ -462,6 +436,51 @@ class ColmapDatasetBase():
                         os.makedirs(os.path.dirname(img_path), exist_ok=True)
                         img_path = fns[i]
                     img = Image.open(img_path)
+                    W = Image.open(fns[i]).size[0]
+                    H = Image.open(fns[i]).size[1]
+
+                    # Get camera parameters
+                    if isinstance(intrinsics[i], np.ndarray):
+                        if 'img_wh' in self.config:
+                            w, h = self.config.img_wh
+                        else:
+                            self.factor = 1.0 / self.config.img_downscale
+                            w, h = int(W * self.factor), int(H * self.factor)
+                        img_wh = (w, h)
+                        intrinsic = intrinsics[i]
+                        intrinsic[:2,:] *= self.factor
+                        fx = intrinsic[0, 0] # camdata[1].params[0] * self.factor
+                        fy = intrinsic[1, 1] # camdata[1].params[0] * self.factor
+                        cx = intrinsic[0, 2]
+                        cy = intrinsic[1, 2]
+                    else:
+                        intrinsic = intrinsics[i]
+                        H = int(intrinsic["height"])
+                        W = int(intrinsic["width"])
+
+                        if 'img_wh' in self.config:
+                            w, h = self.config.img_wh
+                        elif 'img_downscale' in self.config:
+                            w, h = int(W / self.config.img_downscale +
+                                       0.5), int(H / self.config.img_downscale + 0.5)
+                        else:
+                            raise KeyError(
+                                "Either img_wh or img_downscale should be specified.")
+
+                        img_wh = (w, h)
+                        self.factor = w / W
+
+                        fx = fy = intrinsic[
+                            "f"] * self.factor # camdata[1].params[0] * self.factor
+                        cx = intrinsic["cx"] * self.factor
+                        cy = intrinsic["cy"] * self.factor
+
+                    direction = get_ray_directions(w, h, fx, fy, cx, cy).to(
+                        self.rank
+                    ) if self.config.load_data_on_gpu else get_ray_directions(
+                        w, h, fx, fy, cx, cy).cpu()
+                    directions.append(direction)
+
                     img_path = fns[i].replace(
                         img_folder,
                         f"{img_folder}_{self.config.img_downscale}")
