@@ -123,12 +123,86 @@ class ColmapDatasetBase():
 
             all_images, all_vis_masks, all_fg_masks, all_depths, all_depth_masks, directions = [], [], [], [], [], []
 
+<<<<<<< HEAD
             import open3d as o3d
+=======
+            print(colored('Remember to deal with the unique dimention of rear images', 'red'))
+            # Load point cloud which might be scanned
+            import open3d as o3d
+            if self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
+                pts3d = []
+                pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
+                for id_pts, pts_frame in pts3d_frames.items():
+                    pts3d.append(np.array(pts_frame))
+                pts3d = np.vstack(pts3d)[:, :3]
+            elif self.config.pcd_path is not None:
+                assert os.path.isfile(self.config.pcd_path)
+                pts3d = np.asarray(
+                    o3d.io.read_point_cloud(self.config.pcd_path).points)
+            else:
+                print(colored('sparse point cloud not given', 'red'))
+                pts3d = []
+
+            if pts3d is not None:
+                # NOTE: save the point cloud using point cloud
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(pts3d)
+                pts3d = torch.from_numpy(pts3d).float()
+                mesh_dir = os.path.join(self.config.root_dir, 'mesh_exp')
+                os.makedirs(mesh_dir, exist_ok=True)
+                if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
+                    # pcd = pcd.voxel_down_sample(voxel_size=0.002)
+                    pcd.estimate_normals(
+                                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=20))
+                    o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'), pcd)
+                else:
+                    pcd.normals = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply')).normals
+
+
+                # Poisson surface on top of given GT points
+                mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
+                if not os.path.exists(mesh_poisson_path):
+                    print(colored(
+                            '[1] Extracting Poisson surface on top of given GT points',
+                            'blue'))
+                    with o3d.utility.VerbosityContextManager(
+                            o3d.utility.VerbosityLevel.Debug) as cm:
+                        # Poisson
+                        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                            pcd, depth=10, linear_fit=True)
+                    o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+                mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
+
+                # Poisson surface on top of given GT points
+                """
+                mesh_bp_path = os.path.join(mesh_dir, 'layout_mesh_bp.ply')
+                if not os.path.exists(mesh_bp_path):
+                    print(colored(
+                            '[2] Extracting ball pivoting surface on top of given GT points',
+                            'blue'))
+                    distances = pcd.compute_nearest_neighbor_distance()
+                    radius = np.max([1.5 * np.mean(distances), 0.02])
+                    # estimate radius for rolling ball
+                    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+                               pcd,
+                               o3d.utility.DoubleVector([radius, radius * 2]))
+                    o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+                mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_bp_path))
+                """
+
+                # Create scene and add the mesh
+                scene = o3d.t.geometry.RaycastingScene()
+                scene.add_triangles(mesh_o3d)
+
+>>>>>>> 30934cd3847c5804aa13584cdeb770bbe3b25d2c
             pts_clt = o3d.geometry.PointCloud()
             self.num_imgs = 0
             self.num_cams = 1
             for i, d in enumerate(all_c2w):
+<<<<<<< HEAD
                 self.num_imgs += 1
+=======
+>>>>>>> 30934cd3847c5804aa13584cdeb770bbe3b25d2c
                 if self.split in ['train', 'val']:
                     idx_tmp = fns[i].replace(self.config.root_dir,
                                              '')[1:].rfind('/')
@@ -148,7 +222,10 @@ class ColmapDatasetBase():
                     if isinstance(intrinsics[i], np.ndarray):
                         if 'img_wh' in self.config:
                             w, h = self.config.img_wh
+<<<<<<< HEAD
                             self.factor = w / W
+=======
+>>>>>>> 30934cd3847c5804aa13584cdeb770bbe3b25d2c
                         else:
                             self.factor = 1.0 / self.config.img_downscale
                             w, h = int(W * self.factor), int(H * self.factor)
@@ -175,7 +252,13 @@ class ColmapDatasetBase():
 
                         img_wh = (w, h)
                         self.factor = w / W
+<<<<<<< HEAD
                         fx = fy = intrinsic["f"] * self.factor
+=======
+
+                        fx = fy = intrinsic[
+                            "f"] * self.factor # camdata[1].params[0] * self.factor
+>>>>>>> 30934cd3847c5804aa13584cdeb770bbe3b25d2c
                         cx = intrinsic["cx"] * self.factor
                         cy = intrinsic["cy"] * self.factor
 

@@ -69,7 +69,7 @@ model:
       output_activation: none
       n_neurons: 64
       n_hidden_layers: 1
-      sphere_init: true
+      sphere_init: false # true
       sphere_init_radius: 0.5
       weight_norm: true
     max_imgs: ${dataset.max_imgs}
