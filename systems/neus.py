@@ -141,14 +141,15 @@ class NeuSSystem(BaseSystem):
             depth_mask = batch['depth_mask'][out['rays_valid_full'][...,0]]
             if depth_mask.shape[0] == (batch['fg_mask'] > 0.5).shape[0] and depth_mask.shape[0] == rgb_mse.shape[0]:
                 depth_mask *= (batch['fg_mask'] > 0.5)
-                depth_mask = depth_mask.float()
-                depth_mask *= (rgb_mse / exposure_mse)
+                depth_mask = depth_mask.float() * rgb_mse / exposure_mse
+                # depth_mask = depth_mask.float() * loss_rgb_mse / exposure_mse
             loss_depth_l1 = F.l1_loss(out['sdf0_ray_distance'][out['rays_valid_full']] * depth_mask, batch['depth'][out['rays_valid_full'][...,0]] * depth_mask)
             self.log('train/loss_depth_l1', loss_depth_l1)
             loss += loss_depth_l1 * self.C(self.config.system.loss.lambda_depth_l1)
         
         opacity = torch.clamp(out['opacity'].squeeze(-1), 1.e-3, 1.-1.e-3)
-        loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float())
+        loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float(), partial='neg')
+        # loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float())
         self.log('train/loss_mask', loss_mask)
         loss += loss_mask * (self.C(self.config.system.loss.lambda_mask) if self.dataset.apply_mask else 0.0)
 
@@ -162,7 +163,6 @@ class NeuSSystem(BaseSystem):
 
         if self.C(self.config.system.loss.lambda_surface_bias) > 0:
             loss_bias = F.l1_loss(out['sdf_rendered'], torch.zeros_like(out['sdf_rendered']), reduction='mean')
-            # loss_bias = F.l1_loss(out['depth'], torch.zeros_like(out['depth']), reduction='mean')
             loss += loss_bias * self.C(self.config.system.loss.lambda_surface_bias) 
         if self.C(self.config.system.loss.lambda_curvature) > 0:
             assert 'sdf_laplace_samples' in out, "Need geometry.grad_type='finite_difference' to get SDF Laplace samples"
@@ -327,12 +327,12 @@ class NeuSSystem(BaseSystem):
             **mesh
         )        
         try:
-            self.dataset.transform_s
+            self.dataset.repose_s
             # export with the original pose
             vertices = np.asarray(mesh['v_pos'])
-            vertices *= self.dataset.transform_s
-            vertices -= torch.squeeze(self.dataset.transform_t).repeat(vertices.shape[0], 1).numpy()
-            vertices = np.transpose(torch.inverse(self.dataset.transform_R).numpy() @ np.transpose(vertices))
+            vertices *= self.dataset.repose_s.numpy()
+            vertices -= torch.squeeze(self.dataset.repose_t).repeat(vertices.shape[0], 1).numpy()
+            vertices = np.transpose(torch.inverse(self.dataset.repose_R).numpy() @ np.transpose(vertices))
             mesh['v_pos'] = torch.tensor(vertices)
             if self.config.dataset.mesh_outpath != False:
                 self.save_mesh(

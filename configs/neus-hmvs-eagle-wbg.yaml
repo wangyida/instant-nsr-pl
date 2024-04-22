@@ -6,23 +6,26 @@ dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/Buildings
   pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
-  pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
+  pcd_path: false # /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
-  img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
-  cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically
-  repose: true # false
+  img_wh:
+    - 960
+    - 540
+  img_downscale: 4 # better with more than 1000 x 1000 resolution
+  cam_downscale: false # if false, to rescale the cameras/pts positions automatically
+  repose: true
   up_est_method: ground # no-change/camera/ground/z-axis 
   center_est_method: point # camera/point
-  n_test_traj_steps: 60
+  n_test_traj_steps: 120
   apply_mask: false
-  apply_depth: false
+  apply_depth: true
   load_data_on_gpu: false
-  max_imgs: 1600
+  max_imgs: 1000
 
 model:
   name: neus
   radius: 1.0
-  num_samples_per_ray: 1024 # 4096
+  num_samples_per_ray: 2048 # 4096
   train_num_rays: 256
   max_train_num_rays: 8192
   grid_prune: true
@@ -139,7 +142,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
-    lambda_depth_l1: [5e3, 1.0, 0.1, 8e4] # [5e3, 0.0, 1.0, 1e5]
+    lambda_depth_l1: [5e3, 1.0, 0.1, 6e4] # [5e3, 0.0, 1.0, 6e4]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 0.0 # topology warmup
@@ -149,7 +152,7 @@ system:
     lambda_distortion_bg: 0.0
     lambda_opaque: 1e-2
     lambda_entropy: 1e-4
-    lambda_surface_bias: 0.0 # [5e3, 0.0, 0.1, 8e4] # refer to D-NeuS
+    lambda_surface_bias: 0. # [5e3, 0.0, 0.1, 6e4] # refer to D-NeuS
   optimizer:
     name: AdamW
     args:
@@ -192,11 +195,11 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 4e4 # 8e4
+  max_steps: 6e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5e3
+  val_check_interval: 1e4 # 6e4
   limit_train_batches: 1.0
-  limit_val_batches: 3
+  limit_val_batches: 6
   enable_progress_bar: true
   precision: 16

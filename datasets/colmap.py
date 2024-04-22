@@ -2,9 +2,9 @@ import os
 import math
 import numpy as np
 from PIL import Image
+from termcolor import colored
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 import torchvision.transforms.functional as TF
 
@@ -15,160 +15,7 @@ from datasets.colmap_utils import \
     read_cameras_binary, read_images_binary, read_points3d_binary
 from models.ray_utils import get_ray_directions
 from utils.misc import get_rank
-
-
-# get center
-def get_center(pts):
-    center = pts.mean(0)
-    dis = (pts - center[None,:]).norm(p=2, dim=-1)
-    mean, std = dis.mean(), dis.std()
-    q25, q75 = torch.quantile(dis, 0.25), torch.quantile(dis, 0.75)
-    valid = (dis > mean - 1.5 * std) & (dis < mean + 1.5 * std) & (dis > mean - (q75 - q25) * 1.5) & (dis < mean + (q75 - q25) * 1.5)
-    center = pts[valid].mean(0)
-    return center
-
-# get rotation
-def get_rot(a, b):
-    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
-    v = np.cross(a, b)
-    c = np.dot(a, b)
-    # handle exception for the opposite direction input
-    if c < -1 + 1e-10:
-        return get_rot(a + np.random.uniform(-1e-2, 1e-2, 3), b)
-    s = np.linalg.norm(v)
-    kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    return np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2 + 1e-10))
-
-def normalize_poses(poses, pts, up_est_method, center_est_method, cam_downscale=None):
-    # NOTE: estimate the center
-    if center_est_method == 'camera':
-        # estimation scene center as the average of all camera positions
-        center = poses[...,3].mean(0)
-    elif center_est_method == 'lookat':
-        # estimation scene center as the average of the intersection of selected pairs of camera rays
-        cams_ori = poses[...,3]
-        cams_dir = poses[:,:3,:3] @ torch.as_tensor([0.,0.,-1.])
-        cams_dir = F.normalize(cams_dir, dim=-1)
-        A = torch.stack([cams_dir, -cams_dir.roll(1,0)], dim=-1)
-        b = -cams_ori + cams_ori.roll(1,0)
-        t = torch.linalg.lstsq(A, b).solution
-        center = (torch.stack([cams_dir, cams_dir.roll(1,0)], dim=-1) * t[:,None,:] + torch.stack([cams_ori, cams_ori.roll(1,0)], dim=-1)).mean((0,2))
-    elif center_est_method == 'point':
-        # first estimation scene center as the average of all camera positions
-        # later we'll use the center of all points bounded by the cameras as the final scene center
-        center = get_center(pts) # .mean(0)
-    else:
-        raise NotImplementedError(f'Unknown center estimation method: {center_est_method}')
-
-    # NOTE: estimate the up-direction
-    if up_est_method == 'ground':
-        # estimate up direction as the normal of the estimated ground plane
-        # use RANSAC to estimate the ground plane in the point cloud
-        import pyransac3d as pyrsc
-        ground = pyrsc.Plane()
-        plane_eq, inliers = ground.fit(pts.numpy(), thresh=0.01) # TODO: determine thresh based on scene scale
-        plane_eq = torch.as_tensor(plane_eq) # A, B, C, D in Ax + By + Cz + D = 0
-        z = F.normalize(plane_eq[:3], dim=-1) # plane normal as up direction
-        signed_distance = (torch.cat([pts, torch.ones_like(pts[...,0:1])], dim=-1) * plane_eq).sum(-1)
-        if signed_distance.mean() < 0:
-            z = -z # flip the direction if points lie under the plane
-    elif up_est_method == 'camera':
-        # estimate up direction as the average of all camera up directions
-        z = F.normalize((poses[...,3] - center).mean(0), dim=0)
-    elif up_est_method == 'z-axis':
-        # center pose
-        poses[:,:3,1:3] *= -1. # OpenGL => COLMAP
-        # full 4x4 poses
-        onehot = torch.tile(torch.tensor([0.,0.,0.,1.0]), (poses.size()[0],1,1))
-        poses = torch.cat((poses, onehot), axis=1).cpu().numpy()
-        # normalization
-        z = poses[:,:3,1].mean(0) / (np.linalg.norm(poses[:,:3,1].mean(0)) + 1e-10)
-        poses = torch.as_tensor(poses[:,:3]).float()
-    else:
-        raise NotImplementedError(f'Unknown up estimation method: {up_est_method}')
-
-    # NOTE: get rot matrix to set camera up direction to [0,0,1]
-    R_z = get_rot(z, [0,0,1])
-    R_z = torch.tensor(np.pad(R_z, [0,1])).float()
-    R_z[-1,-1] = 1
-    Rc = R_z[:3,:3].T
-
-    # NOTE: rotate and translate
-    if center_est_method == 'point':
-        # rotation
-        R = Rc.T
-        poses_homo = torch.cat([poses, torch.as_tensor([[[0.,0.,0.,1.]]]).expand(poses.shape[0], -1, -1)], dim=1)
-        inv_trans = torch.cat([torch.cat([R, torch.as_tensor([[0.,0.,0.]]).T], dim=1), torch.as_tensor([[0.,0.,0.,1.]])], dim=0)
-        poses_norm = (inv_trans @ poses_homo)[:,:3]
-        pts = (inv_trans @ torch.cat([pts, torch.ones_like(pts[:,0:1])], dim=-1)[...,None])[:,:3,0]
-
-        # translation and scaling
-        poses_min, poses_max = poses_norm[...,3].min(0)[0], poses_norm[...,3].max(0)[0]
-        pts_fg = pts[(poses_min[0] < pts[:,0]) & (pts[:,0] < poses_max[0]) & (poses_min[1] < pts[:,1]) & (pts[:,1] < poses_max[1])]
-        center = get_center(pts_fg)
-        tc = center.reshape(3, 1)
-        t = -tc
-        poses_homo = torch.cat([poses_norm, torch.as_tensor([[[0.,0.,0.,1.]]]).expand(poses_norm.shape[0], -1, -1)], dim=1)
-        inv_trans = torch.cat([torch.cat([torch.eye(3), t], dim=1), torch.as_tensor([[0.,0.,0.,1.]])], dim=0)
-        poses_norm = (inv_trans @ poses_homo)[:,:3]
-
-        pts = (inv_trans @ torch.cat([pts, torch.ones_like(pts[:,0:1])], dim=-1)[...,None])[:,:3,0]
-        if up_est_method == 'z-axis':
-            # rectify convention
-            poses_norm[:,:3,1:3] *= -1 # COLMAP => OpenGL
-            poses_norm = poses_norm[:, [1,0,2],:]
-            poses_norm[:,2] *= -1
-            pts = pts[:,[1,0,2]]
-            pts[:,2] *= -1
-    else:
-        # rotation and translation
-        tc = center.reshape(3, 1)
-        R, t = Rc.T, -Rc.T @ tc
-        poses_homo = torch.cat([poses, torch.as_tensor([[[0.,0.,0.,1.]]]).expand(poses.shape[0], -1, -1)], dim=1)
-        inv_trans = torch.cat([torch.cat([R, t], dim=1), torch.as_tensor([[0.,0.,0.,1.]])], dim=0)
-        poses_norm = (inv_trans @ poses_homo)[:,:3] # (N_images, 3, 4)
-
-        # apply the transformation to the point cloud
-        pts = (inv_trans @ torch.cat([pts, torch.ones_like(pts[:,0:1])], dim=-1)[...,None])[:,:3,0]
-        if up_est_method == 'z-axis':
-            # rectify convention
-            poses_norm[:,:3,1:3] *= -1 # COLMAP => OpenGL
-            poses_norm = poses_norm[:, [1,0,2],:]
-            poses_norm[:,2] *= -1
-            pts = pts[:,[1,0,2]]
-            pts[:,2] *= -1
-
-    # rescaling
-    if cam_downscale:
-        scale = cam_downscale
-    else:
-        # auto-scale with camera positions
-        scale = poses_norm[...,3].norm(p=2, dim=-1).min()
-        print('Auto-scaled by: ', scale)
-    poses_norm[...,3] /= scale
-    pts = pts / scale
-
-    return poses_norm, pts
-
-def create_spheric_poses(cameras, n_steps=120):
-    center = torch.as_tensor([0.,0.,0.], dtype=cameras.dtype, device=cameras.device)
-    mean_d = (cameras - center[None,:]).norm(p=2, dim=-1).mean()
-    mean_h = cameras[:,2].mean()
-    r = (mean_d**2 - mean_h**2).sqrt()
-    up = torch.as_tensor([0., 0., 1.], dtype=center.dtype, device=center.device)
-
-    all_c2w = []
-    for theta in torch.linspace(0, 2 * math.pi, n_steps):
-        cam_pos = torch.stack([r * theta.cos(), r * theta.sin(), mean_h])
-        l = F.normalize(center - cam_pos, p=2, dim=0)
-        s = F.normalize(l.cross(up), p=2, dim=0)
-        u = F.normalize(s.cross(l), p=2, dim=0)
-        c2w = torch.cat([torch.stack([s, u, -l], dim=1), cam_pos[:,None]], axis=1)
-        all_c2w.append(c2w)
-
-    all_c2w = torch.stack(all_c2w, dim=0)
-    
-    return all_c2w
+from utils.pose_utils import get_center, normalize_poses, create_spheric_poses
 
 class ColmapDatasetBase():
     # the data only has to be processed once
@@ -181,7 +28,7 @@ class ColmapDatasetBase():
         self.rank = get_rank()
 
         if not ColmapDatasetBase.initialized:
-            camdata = read_cameras_binary(os.path.join(self.config.root_dir, 'sparse/10/cameras.bin'))
+            camdata = read_cameras_binary(os.path.join(self.config.root_dir, 'sparse/0/cameras.bin'))
 
             H = int(camdata[1].height)
             W = int(camdata[1].width)
@@ -208,23 +55,45 @@ class ColmapDatasetBase():
                 cy = camdata[1].params[3] * factor
             else:
                 raise ValueError(f"Please parse the intrinsics for camera model {camdata[1].model}!")
+            intrinsic = {
+                'width': w,
+                'height': h,
+                'f': fx,
+                'cx': cx,
+                'cy': cy,
+                'b1': 0,
+                'b2': 0,
+                'k1': 0,
+                'k2': 0,
+                'k3': 0,
+                'k4': 0,
+                'p1': 0,
+                'p2': 0,
+                'p3': 0,
+                'p4': 0,
+            }
+            intrinsic = np.array([[fx, 0, cx],[0, fy, cy],[0, 0, 1]])
             
             directions = get_ray_directions(w, h, fx, fy, cx, cy).to(self.rank) if self.config.load_data_on_gpu else get_ray_directions(w, h, fx, fy, cx, cy).cpu()
 
-            imdata = read_images_binary(os.path.join(self.config.root_dir, 'sparse/10/images.bin'))
+            imdata = read_images_binary(os.path.join(self.config.root_dir, 'sparse/0/images.bin'))
 
-            mask_dir = os.path.join(self.config.root_dir, 'masks')
+            mask_dir = os.path.join(self.config.root_dir, 'masks', 'sam')
+            # masks labling invalid regions
+            vis_mask_dir = os.path.join(self.config.root_dir, f'vis_mask')
             has_mask = os.path.exists(mask_dir) # TODO: support partial masks
             self.apply_mask = has_mask and self.config.apply_mask
-            self.apply_depth = self.config.apply_depth
+            self.config.apply_depth = self.config.apply_depth
             
             all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = [], [], [], [], [], []
+
+            pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/0/points3D.bin'))
+            pts3d = np.array([pts3d[k].xyz for k in pts3d])
 
             for i, d in enumerate(imdata.values()):
                 R = d.qvec2rotmat()
                 t = d.tvec.reshape(3, 1)
                 c2w = torch.from_numpy(np.concatenate([R.T, -R.T@t], axis=1)).float()
-                c2w[:,1:3] *= -1. # COLMAP => OpenGL
                 all_c2w.append(c2w)
                 if self.split in ['train', 'val']:
                     img_path = os.path.join(self.config.root_dir, f"images_{self.config.img_downscale}", d.name)
@@ -237,7 +106,7 @@ class ColmapDatasetBase():
                         img.save(os.path.join(self.config.root_dir, f"images_{self.config.img_downscale}", d.name))
                     img = TF.to_tensor(img).permute(1, 2, 0)[...,:3]
                     img = img.to(self.rank) if self.config.load_data_on_gpu else img.cpu()
-                    if has_mask:
+                    if self.apply_mask:
                         mask_paths = [os.path.join(mask_dir, d.name), os.path.join(mask_dir, d.name[3:])]
                         mask_paths = list(filter(os.path.exists, mask_paths))
                         assert len(mask_paths) == 1
@@ -246,30 +115,116 @@ class ColmapDatasetBase():
                         mask = TF.to_tensor(mask)[0]
                     else:
                         mask = torch.ones_like(img[...,0], device=img.device)
-                    vis_mask = torch.ones_like(img[...,0], device=img.device)
+
+                    # NOTE: Visual masks    
+                    self.apply_vis_mask = False # True
+                    if self.apply_vis_mask:
+                        vis_mask_paths = [os.path.join(vis_mask_dir, d.name), os.path.join(vis_mask_dir, d.name[3:])]
+                        vis_mask_paths = list(filter(os.path.exists, vis_mask_paths))
+                        assert len(vis_mask_paths) == 1
+                        vis_mask = Image.open(vis_mask_paths[0]).convert('L') # (H, W, 1)
+                        vis_mask = vis_mask.resize(img_wh, Image.BICUBIC)
+                        vis_mask = TF.to_tensor(vis_mask)[0]
+                    else:
+                        vis_mask = torch.ones_like(img[...,0], device=img.device)
+
                     all_fg_masks.append(mask) # (h, w)
                     all_vis_masks.append(vis_mask) # (h, w)
                     all_images.append(img)
-                    if self.apply_depth:
-                        # load estimated or recorded depth map
-                        depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
-                        if os.path.isfile(depth_path):
-                            depth = torch.load(depth_path)[...,3]
-                            all_depths.append(depth)
+                    if self.config.apply_depth:
+                        import open3d as o3d
+                        # NOTE: save the point cloud using point cloud
+                        pcd = o3d.geometry.PointCloud()
+                        mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D.ply')
+                        if os.path.exists(mesh_init_path):
+                            mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_init_path))
                         else:
-                            print(colored('skip, ', depth_path + 'does not exist', 'red'))
-                            all_depths.append(torch.zeros_like(img[...,0], device=img.device))
-                        # load the mask which is used to determine rays with confident depth
-                        depth_mask_path = os.path.join(self.config.root_dir, f"{frame['depth_mask_path']}")
-                        if os.path.isfile(depth_mask_path):
-                            depth_mask = (torch.load(depth_mask_path)[...] < 0.35).to(bool)
-                            all_depth_masks.append(depth_mask)
-                        else:
-                            print(colored('skip, ', depth_mask_path + 'does not exist', 'red'))
-                            all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
+                            mesh_dir = os.path.join(self.config.root_dir, 'meshes')
+                            os.makedirs(mesh_dir, exist_ok=True)
+                            if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
+                                pcd.points = o3d.utility.Vector3dVector(pts3d)
+                            else:
+                                pcd = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'))
+                            # pts3d = torch.from_numpy(pts3d).float()
+                            if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
+                                # pcd = pcd.voxel_down_sample(voxel_size=0.002)
+                                pcd.estimate_normals(
+                                            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=20))
+                                o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'), pcd)
+                            else:
+                                pcd.normals = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply')).normals
+
+                            # Poisson surface on top of given GT points
+                            mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
+                            if not os.path.exists(mesh_poisson_path):
+                                print(colored(
+                                        'Extracting Poisson surface on top of given GT points',
+                                        'blue'))
+                                with o3d.utility.VerbosityContextManager(
+                                        o3d.utility.VerbosityLevel.Debug) as cm:
+                                    # Poisson
+                                    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                                        pcd, depth=10, linear_fit=True)
+                                o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+                            else:
+                                print(colored(
+                                        'Poisson surface is directly loaded',
+                                        'blue'))
+                            mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
+
+                        # Create scene and add the mesh
+                        scene = o3d.t.geometry.RaycastingScene()
+                        scene.add_triangles(mesh_o3d)
+
+                        # Rays are 6D vectors with origin and ray direction.
+                        # Here we use a helper function to create rays
+                        rays_mesh = scene.create_rays_pinhole(intrinsic_matrix=intrinsic, extrinsic_matrix=np.linalg.inv(np.concatenate((c2w.numpy(), np.array([[0, 0, 0, 1.]])))), width_px=w, height_px=h)
+
+                        # Compute the ray intersections.
+                        rays_rast = scene.cast_rays(rays_mesh)
+
+                        # visualize the hit distance (depth)
+                        # save rasterized depth
+                        depth_rast_path = os.path.join(
+                                self.config.root_dir, 'depths',
+                                f"rasted_{self.config.img_downscale}")
+                        os.makedirs(depth_rast_path, exist_ok=True)
+                        np.save(os.path.join(depth_rast_path, d.name.split("/")[-1][:-3] + 'npy'), rays_rast['t_hit'].numpy())
+
+                        # save rasterized norm
+                        norm_rast_path = os.path.join(
+                                self.config.root_dir, 'normals',
+                                f"rasted_{self.config.img_downscale}")
+                        os.makedirs(norm_rast_path, exist_ok=True)
+                        rays_rast['primitive_normals'].numpy()[:,:,1:3] *= -1 # OpenGL => COLMAP
+                        np.save(os.path.join(norm_rast_path, d.name.split("/")[-1][:-3] + 'npy'), rays_rast['primitive_normals'].numpy())
+                        depth_rast = Image.fromarray(rays_rast['t_hit'].numpy())
+
+                        save_norm_dep_vis = True
+                        if save_norm_dep_vis:
+                            # visualize the hit distance (depth)
+                            norm_rast = Image.fromarray(((rays_rast['primitive_normals'].numpy() + 1) * 128).astype(np.uint8))
+                            depth_rast.save(
+                                os.path.join(depth_rast_path,
+                                    d.name.split("/")[-1][:-3] + 'tiff'))
+                            norm_rast.save(
+                                os.path.join(
+                                    norm_rast_path,
+                                    d.name.split("/")[-1][:-3] + 'png'))
+                        depth_rast = TF.pil_to_tensor(depth_rast).permute(
+                            1, 2, 0) / self.config.cam_downscale
+                        inf_mask = (depth_rast == float("Inf"))
+                        depth_rast[inf_mask] = 0
+                        depth_rast = depth_rast.to(
+                            self.rank
+                        ) if self.config.load_data_on_gpu else depth_rast.cpu()
+                        depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
+                        all_depths.append(depth_rast)
+                        all_depth_masks.append(depth_rast_mask)
                     else:
                         all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                         all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
+
             
             all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = \
                 torch.stack(all_c2w, dim=0).float(), \
@@ -279,9 +234,28 @@ class ColmapDatasetBase():
                 torch.stack(all_depth_masks, dim=0).float(), \
                 torch.stack(all_vis_masks, dim=0).float()
 
-            pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/10/points3D.bin'))
-            pts3d = torch.from_numpy(np.array([pts3d[k].xyz for k in pts3d])).float()
-            all_c2w, pts3d = normalize_poses(all_c2w, pts3d, up_est_method=self.config.up_est_method, center_est_method=self.config.center_est_method, cam_downscale=self.config.cam_downscale)
+            pts3d = torch.from_numpy(pts3d).float()
+            all_c2w[:,:,1:3] *= -1. # COLMAP => OpenGL
+            if self.config.repose:
+                all_c2w, pts3d, R, t, cam_downscale = normalize_poses(
+                    all_c2w,
+                    pts3d,
+                    up_est_method=self.config.up_est_method,
+                    center_est_method=self.config.center_est_method,
+                    cam_downscale=self.config.cam_downscale)
+            else:
+                poses_min, poses_max = all_c2w[..., 3].min(0)[0], all_c2w[
+                    ..., 3].max(0)[0]
+                pts_fg = pts3d[(poses_min[0] < pts3d[:, 0])
+                               & (pts3d[:, 0] < poses_max[0]) &
+                               (poses_min[1] < pts3d[:, 1]) &
+                               (pts3d[:, 1] < poses_max[1])]
+                print(colored(get_center(pts3d), 'blue'))
+                all_c2w[:, :, 3] -= get_center(pts3d)
+                pts3d -= get_center(pts3d)
+                R = torch.tensor([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+                t = -get_center(pts3d)
+                cam_downscale = self.config.cam_downscale
 
             ColmapDatasetBase.properties = {
                 'w': w,
@@ -290,7 +264,7 @@ class ColmapDatasetBase():
                 'factor': factor,
                 'has_mask': has_mask,
                 'apply_mask': self.apply_mask,
-                'apply_depth': self.apply_depth,
+                'apply_depth': self.config.apply_depth,
                 'directions': directions,
                 'pts3d': pts3d,
                 'all_c2w': all_c2w,
@@ -299,6 +273,9 @@ class ColmapDatasetBase():
                 'all_depths': all_depths,
                 'all_depth_masks': all_depth_masks,
                 'all_vis_masks': all_vis_masks,
+                'repose_R': R,
+                'repose_t': t,
+                'repose_s': cam_downscale
             }
 
             ColmapDatasetBase.initialized = True

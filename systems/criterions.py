@@ -152,8 +152,13 @@ class SSIM():
             return _ssim.mean()
 
 
-def binary_cross_entropy(input, target):
+def binary_cross_entropy(input, target, partial=None):
     """
     F.binary_cross_entropy is not numerically stable in mixed-precision training.
     """
-    return -(target * torch.log(input) + (1 - target) * torch.log(1 - input)).mean()
+    if partial == 'pos':
+        return -(target * torch.log(input)).mean()
+    elif partial == 'neg':
+        return -((1 - target) * torch.log(1 - input)).mean()
+    else:
+        return -(target * torch.log(input) + (1 - target) * torch.log(1 - input)).mean()

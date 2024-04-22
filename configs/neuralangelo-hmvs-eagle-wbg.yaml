@@ -8,12 +8,15 @@ dataset:
   pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply
   mesh_outpath: false
-  img_downscale: 4 # better with more than 1000 x 1000 resolution
+  img_wh:
+    - 960
+    - 540
+  img_downscale: 2 # 4 # better with more than 1000 x 1000 resolution
   cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: ground # no-change/camera/ground/z-axis 
   center_est_method: point # camera/point
-  n_test_traj_steps: 60
+  n_test_traj_steps: 120
   apply_mask: false
   apply_depth: false
   load_data_on_gpu: false
@@ -46,7 +49,7 @@ model:
     grad_type: finite_difference
     isosurface:
       method: mc
-      resolution: 768 # 1536
+      resolution: 1024 # 1536
       chunk: 2097152 # 128**3
       threshold: 0.
     xyz_encoding_config:
@@ -66,7 +69,7 @@ model:
       output_activation: none
       n_neurons: 64
       n_hidden_layers: 1
-      sphere_init: false # true
+      sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
     finite_difference_eps: progressive
@@ -140,7 +143,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_rgb_cos: 0.
     lambda_mask: 0.0
-    lambda_depth_l1: [5e3, 1.0, 0.1, 8e4] # [5e3, 0.0, 1.0, 1e5]
+    lambda_depth_l1: [5e3, 1.0, 0.1, 6e4] # [5e3, 0.0, 1.0, 1e5]
     lambda_eikonal: 0.1
     lambda_adaptive: 1e-6
     lambda_curvature: 5e-4 # topology warmup
@@ -194,11 +197,11 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 4e4 # 8e4
+  max_steps: 6e4
   log_every_n_steps: 500
   num_sanity_val_steps: 0
-  val_check_interval: 5e3
+  val_check_interval: 2e4
   limit_train_batches: 1.0
-  limit_val_batches: 3
+  limit_val_batches: 6 # 3
   enable_progress_bar: true
   precision: 16

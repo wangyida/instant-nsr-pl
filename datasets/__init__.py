@@ -24,16 +24,13 @@ def make(name, config):
             import R3DUtil
         else:
             print(
-                "In case you are deploying on", colored("STARMAP platform,",
+                "In case you are deploying on", colored("cloud,",
                         'yellow'), "compiled parsers such as",
                 colored("'R3DUtils'", 'yellow'), "or",
                 colored("'R3DParser'", 'yellow'),
-                "should be explicitly included.")
-            print(
-                "try -",
-                colored(
-                    "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/yidaw/Documents/buildboat/R3DParser/3rd/R3DLib/bin/",
-                    'blue'))
+                "should be explicitly included,")
+            print(colored("with", 'blue'),
+                    "export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${HOME}/Documents/buildboat/R3DParser/3rd/R3DLib/bin/")
         from . import hmvs
     dataset = datasets[name](config)
     return dataset

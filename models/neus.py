@@ -279,6 +279,7 @@ class NeuSModel(BaseModel):
         }
 
         try:
+            # NOTE: this could be optimized so that occluded surface can also be used as supervision
             raymask = (sdf[:out['num_samples'] - 1] * sdf[1:out['num_samples']]) < 0
             sf_ind = torch.where(raymask == True)[0]
 

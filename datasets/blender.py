@@ -84,6 +84,8 @@ class BlenderDatasetBase():
         pts_clt = o3d.geometry.PointCloud()
         for i, frame in enumerate(meta['frames']):
             c2w_npy = np.array(frame['transform_matrix'])
+            # NOTE: only specific dataset, e.g. Baoru's medical images needs to convert
+            # c2w_npy[:3, 1:3] *= -1.  # COLMAP => OpenGL
             c2w = torch.from_numpy(c2w_npy[:3, :4])
             self.all_c2w.append(c2w)
 
@@ -95,6 +97,8 @@ class BlenderDatasetBase():
 
             # load the estimated or recorded depth map
             if "depth_path" in frame:
+                mesh_dir = os.path.join(self.config.root_dir, 'meshes')
+                os.makedirs(mesh_dir, exist_ok=True)
                 depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
                 if depth_path.split('.')[-1] == 'tiff':
                     depth = Image.open(depth_path).convert('I')
@@ -125,10 +129,9 @@ class BlenderDatasetBase():
                     intrin_o3d = o3d.camera.PinholeCameraIntrinsic(
                         w, h, self.focal_x, self.focal_y, self.cx, self.cy)
                     # Open3D uses world-to-camera extrinsics
-                    c2w_npy[:3, 1:3] *= -1.  # COLMAP => OpenGL
                     pts_frm = o3d.geometry.PointCloud.create_from_depth_image(
                         depth_o3d, intrinsic=intrin_o3d, extrinsic=np.linalg.inv(c2w_npy), depth_scale=1)
-                    # o3d.io.write_point_cloud(f"./test/layout_depth_frame_{str(i + 1)}.ply", pts_frm)
+                    # o3d.io.write_point_cloud(os.path.join(mesh_dir, f"./layout_depth_frame_{str(i + 1)}.ply"), pts_frm)
                     pts_clt.points = (o3d.utility.Vector3dVector(
                         np.concatenate((np.array(pts_clt.points), np.array(pts_frm.points)),
                                        axis=0)))
@@ -184,8 +187,25 @@ class BlenderDatasetBase():
                 vis_mask = torch.ones_like(img[...,0], device=img.device)
             self.all_vis_masks.append(vis_mask)
 
-        # pts_clt = pts_clt.voxel_down_sample(voxel_size=0.01)
-        o3d.io.write_point_cloud("./test/layout_depth_clt.ply", pts_clt)
+        pts_clt = pts_clt.voxel_down_sample(voxel_size=0.5)
+        pts_clt.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=20))
+        o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'), pts_clt)
+        # Poisson surface on top of given GT points
+        mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
+        if not os.path.exists(mesh_poisson_path):
+            print(colored(
+                    'Extracting Poisson surface on top of given GT points',
+                    'blue'))
+            with o3d.utility.VerbosityContextManager(
+                    o3d.utility.VerbosityLevel.Debug) as cm:
+                # Poisson
+                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                    pts_clt, depth=10, linear_fit=True)
+                densities = np.asarray(densities)
+                vertices_to_remove = densities < np.quantile(densities, 0.02)
+                mesh.remove_vertices_by_mask(vertices_to_remove)
+            o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
 
         self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks, self.all_vis_masks = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \
@@ -196,7 +216,7 @@ class BlenderDatasetBase():
             torch.stack(self.all_vis_masks, dim=0).float()
 
         # translate
-        # self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
+        self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
 
         # rescale
         if 'cam_downscale' not in self.config:
