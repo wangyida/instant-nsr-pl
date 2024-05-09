@@ -6,6 +6,7 @@ import copy
 import pyransac3d as pyrsc
 import torch
 import torch.nn.functional as F
+import math
 
 # get center
 def get_center(pts):
@@ -166,7 +167,7 @@ def normalize_poses(poses,
         # rescaling
         if not cam_downscale:
             # auto-scale with point cloud supervision
-            cam_downscale = pts.norm(p=2, dim=-1).max()
+            cam_downscale = pts.norm(p=2, dim=-1).max().numpy()
             # auto-scale with camera positions
             # cam_downscale = poses_norm[..., 3].norm(p=2, dim=-1).min()
         poses_norm[..., 3] /= cam_downscale
@@ -208,7 +209,7 @@ def normalize_poses(poses,
         # rescaling
         if not cam_downscale:
             # auto-scale with point cloud supervision
-            cam_downscale = pts.norm(p=2, dim=-1).max()
+            cam_downscale = pts.norm(p=2, dim=-1).max().numpy()
             # auto-scale with camera positions
             # cam_downscale = poses_norm[..., 3].norm(p=2, dim=-1).min()
         poses_norm[..., 3] /= cam_downscale

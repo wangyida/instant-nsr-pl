@@ -330,7 +330,7 @@ class NeuSSystem(BaseSystem):
             self.dataset.repose_s
             # export with the original pose
             vertices = np.asarray(mesh['v_pos'])
-            vertices *= self.dataset.repose_s.numpy()
+            vertices *= self.dataset.repose_s # .numpy()
             vertices -= torch.squeeze(self.dataset.repose_t).repeat(vertices.shape[0], 1).numpy()
             vertices = np.transpose(torch.inverse(self.dataset.repose_R).numpy() @ np.transpose(vertices))
             mesh['v_pos'] = torch.tensor(vertices)

@@ -135,7 +135,7 @@ class ColmapDatasetBase():
                         import open3d as o3d
                         # NOTE: save the point cloud using point cloud
                         pcd = o3d.geometry.PointCloud()
-                        mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D.ply')
+                        mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D.obj')
                         if os.path.exists(mesh_init_path):
                             mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_init_path))
                         else:
