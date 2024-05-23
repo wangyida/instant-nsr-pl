@@ -82,6 +82,7 @@ class BlenderDatasetBase():
 
         import open3d as o3d
         pts_clt = o3d.geometry.PointCloud()
+        self.num_imgs = len(meta['frames'])
         for i, frame in enumerate(meta['frames']):
             c2w_npy = np.array(frame['transform_matrix'])
             # NOTE: only specific dataset, e.g. Baoru's medical images needs to convert
@@ -187,25 +188,26 @@ class BlenderDatasetBase():
                 vis_mask = torch.ones_like(img[...,0], device=img.device)
             self.all_vis_masks.append(vis_mask)
 
-        pts_clt = pts_clt.voxel_down_sample(voxel_size=0.5)
-        pts_clt.estimate_normals(
-                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=20))
-        o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'), pts_clt)
-        # Poisson surface on top of given GT points
-        mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
-        if not os.path.exists(mesh_poisson_path):
-            print(colored(
-                    'Extracting Poisson surface on top of given GT points',
-                    'blue'))
-            with o3d.utility.VerbosityContextManager(
-                    o3d.utility.VerbosityLevel.Debug) as cm:
-                # Poisson
-                mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                    pts_clt, depth=10, linear_fit=True)
-                densities = np.asarray(densities)
-                vertices_to_remove = densities < np.quantile(densities, 0.02)
-                mesh.remove_vertices_by_mask(vertices_to_remove)
-            o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
+        if self.apply_depth:
+            pts_clt = pts_clt.voxel_down_sample(voxel_size=0.5)
+            pts_clt.estimate_normals(
+                    search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=20))
+            o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'), pts_clt)
+            # Poisson surface on top of given GT points
+            mesh_poisson_path = os.path.join(mesh_dir, 'layout_mesh_ps.ply')
+            if not os.path.exists(mesh_poisson_path):
+                print(colored(
+                        'Extracting Poisson surface on top of given GT points',
+                        'blue'))
+                with o3d.utility.VerbosityContextManager(
+                        o3d.utility.VerbosityLevel.Debug) as cm:
+                    # Poisson
+                    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                        pts_clt, depth=10, linear_fit=True)
+                    densities = np.asarray(densities)
+                    vertices_to_remove = densities < np.quantile(densities, 0.02)
+                    mesh.remove_vertices_by_mask(vertices_to_remove)
+                o3d.io.write_triangle_mesh(mesh_poisson_path, mesh)
 
         self.all_c2w, self.all_images, self.all_fg_masks, self.all_depths, self.all_depth_masks, self.all_vis_masks = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \
@@ -214,6 +216,7 @@ class BlenderDatasetBase():
             torch.stack(self.all_depths, dim=0).float(), \
             torch.stack(self.all_depth_masks, dim=0).float(), \
             torch.stack(self.all_vis_masks, dim=0).float()
+
 
         # translate
         self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)

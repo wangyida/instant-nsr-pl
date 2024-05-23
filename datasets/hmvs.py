@@ -330,23 +330,25 @@ class ColmapDatasetBase():
             if self.config.apply_depth:
                 print(colored('point cloud fused by per-frame depth', 'green'))
                 pts3d = np.array(pts_clt.points)
-            elif self.config.pcd_path is not None and self.config.pcd_path.endswith('.npz'):
-                print(colored('point cloud loaded with a given fused cloud', 'green'))
-                pts3d = []
-                pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
-                for id_pts, pts_frame in pts3d_frames.items():
-                    pts3d.append(np.array(pts_frame))
-                pts3d = np.vstack(pts3d)[:, :3]
-            elif self.config.pcd_path is not None:
-                print(colored('point cloud loaded with a given fused cloud', 'green'))
+            elif self.config.pcd_path:
                 assert os.path.isfile(self.config.pcd_path)
-                pts3d = np.asarray(
-                    o3d.io.read_point_cloud(self.config.pcd_path).points)
+                print(colored('point cloud loaded with a given fused cloud', 'green'))
+                if self.config.pcd_path.endswith('.npz'):
+                    pts3d = []
+                    pts3d_frames = np.load(self.config.pcd_path, allow_pickle=True)['pointcloud'].item()
+                    for id_pts, pts_frame in pts3d_frames.items():
+                        pts3d.append(np.array(pts_frame))
+                    pts3d = np.vstack(pts3d)[:, :3]
+                elif self.config.pcd_path.endswith('.ply'):
+                    pts3d = np.asarray(
+                        o3d.io.read_point_cloud(self.config.pcd_path).points)
             else:
                 print(colored('point cloud supervision not given', 'red'))
-                pts3d = []
+                pts3d = None # []
+                """
                 pts3d = np.asarray(
                     o3d.io.read_point_cloud(self.config.pcd_path).points)
+                """
 
             if pts3d is not None:
                 # NOTE: save the point cloud using point cloud
@@ -434,44 +436,45 @@ class ColmapDatasetBase():
             # Rasterizing dpeth from mesh
             for i, d in enumerate(all_c2w):
                 if self.split in ['train', 'val']:
-                    pts_clt = o3d.t.geometry.PointCloud.from_legacy(o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply')))
-                    depth_reproj = pts_clt.project_to_depth_image(w,
-                                                              h,
-                                                              intrinsics[i],
-                                                              np.linalg.inv(all_c2w[i]),
-                                                              depth_scale=1.0,
-                                                              depth_max=dep_max)
-                    depth_reproj = Image.fromarray(np.asarray(depth_reproj.to_legacy()))
+                    if self.config.apply_depth:
+                        pts_clt = o3d.t.geometry.PointCloud.from_legacy(o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply')))
+                        depth_reproj = pts_clt.project_to_depth_image(w,
+                                                                  h,
+                                                                  intrinsics[i],
+                                                                  np.linalg.inv(all_c2w[i]),
+                                                                  depth_scale=1.0,
+                                                                  depth_max=dep_max)
+                        depth_reproj = Image.fromarray(np.asarray(depth_reproj.to_legacy()))
 
-                    # save reprojected depth
-                    depth_reproj_path = os.path.join(
-                            self.config.root_dir,
-                            f"depth_reproj_{self.config.img_downscale}")
-                    os.makedirs(depth_reproj_path, exist_ok=True)
+                        # save reprojected depth
+                        depth_reproj_path = os.path.join(
+                                self.config.root_dir,
+                                f"depth_reproj_{self.config.img_downscale}")
+                        os.makedirs(depth_reproj_path, exist_ok=True)
 
-                    # visualize the hit distance (depth)
-                    depth_reproj.save(
-                        os.path.join(depth_reproj_path,
-                            fns[i].split("/")[-1][:-3] + 'tiff'))
+                        # visualize the hit distance (depth)
+                        depth_reproj.save(
+                            os.path.join(depth_reproj_path,
+                                fns[i].split("/")[-1][:-3] + 'tiff'))
 
-                    depth_reproj = TF.pil_to_tensor(depth_reproj).permute(
-                        1, 2, 0)
-                    inf_mask = (depth_reproj == float("Inf"))
-                    depth_reproj[inf_mask] = 0
-                    depth_reproj_mask = (depth_reproj > 0.0).to(bool)
+                        depth_reproj = TF.pil_to_tensor(depth_reproj).permute(
+                            1, 2, 0)
+                        inf_mask = (depth_reproj == float("Inf"))
+                        depth_reproj[inf_mask] = 0
+                        depth_reproj_mask = (depth_reproj > 0.0).to(bool)
 
-                    # Rays are 6D vectors with origin and ray direction.
-                    # Here we use a helper function to create rays
-                    rays_mesh = scene.create_rays_pinhole(intrinsic_matrix=intrinsic, extrinsic_matrix=np.linalg.inv(all_c2w[i]), width_px=w, height_px=h)
+                        # Rays are 6D vectors with origin and ray direction.
+                        # Here we use a helper function to create rays
+                        rays_mesh = scene.create_rays_pinhole(intrinsic_matrix=intrinsic, extrinsic_matrix=np.linalg.inv(all_c2w[i]), width_px=w, height_px=h)
 
-                    # Compute the ray intersections.
-                    rays_rast = scene.cast_rays(rays_mesh)
-                    depth_rast = rays_rast['t_hit'].numpy()
-                    norm_rast = rays_rast['primitive_normals'].numpy()
+                        # Compute the ray intersections.
+                        rays_rast = scene.cast_rays(rays_mesh)
+                        depth_rast = rays_rast['t_hit'].numpy()
+                        norm_rast = rays_rast['primitive_normals'].numpy()
 
-                    # add more confident depth values from the scaners
-                    lidar_mask = (depth_reproj_mask != 0)[...,0]
-                    # depth_rast = np.where(lidar_mask, depth_reproj[...,0], depth_rast)
+                        # add more confident depth values from the scaners
+                        lidar_mask = (depth_reproj_mask != 0)[...,0]
+                        # depth_rast = np.where(lidar_mask, depth_reproj[...,0], depth_rast)
 
 
                     # NOTE: foreground masks    
@@ -508,58 +511,59 @@ class ColmapDatasetBase():
                     else:
                         mask = torch.ones_like(img[..., 0], device=img.device)
 
-                    # filter out invalid pixels in the rasted depth maps
-                    inf_mask = (depth_rast == float("Inf"))
-                    depth_rast[inf_mask] = 0
-                    depth_rast *= mask.numpy()
-                    norm_rast *= mask[..., None].numpy()
+                    if self.config.apply_depth:
+                        # filter out invalid pixels in the rasted depth maps
+                        inf_mask = (depth_rast == float("Inf"))
+                        depth_rast[inf_mask] = 0
+                        depth_rast *= mask.numpy()
+                        norm_rast *= mask[..., None].numpy()
 
-                    # save rasterized depth
-                    depth_rast_path = os.path.join(
-                            self.config.root_dir,
-                            f"depth_rast_{self.config.img_downscale}")
-                    os.makedirs(depth_rast_path, exist_ok=True)
-                    np.save(os.path.join(depth_rast_path, fns[i].split("/")[-1][:-3] + 'npy'), depth_rast)
-
-                    # save rasterized norm
-                    norm_rast_path = os.path.join(
-                            self.config.root_dir,
-                            f"norm_rast_{self.config.img_downscale}")
-                    os.makedirs(norm_rast_path, exist_ok=True)
-                    np.save(os.path.join(norm_rast_path, fns[i].split("/")[-1][:-3] + 'npy'), norm_rast)
-
-                    save_norm_dep_vis = True
-                    depth_rast = Image.fromarray(depth_rast)
-                    if save_norm_dep_vis:
-                        # visualize the hit distance (depth)
-                        depth_rast.save(
-                            os.path.join(depth_rast_path,
-                                fns[i].split("/")[-1][:-3] + 'tiff'))
+                        # save rasterized depth
+                        depth_rast_path = os.path.join(
+                                self.config.root_dir,
+                                f"depth_rast_{self.config.img_downscale}")
+                        os.makedirs(depth_rast_path, exist_ok=True)
+                        np.save(os.path.join(depth_rast_path, fns[i].split("/")[-1][:-3] + 'npy'), depth_rast)
 
                         # save rasterized norm
-                        norm_rast = Image.fromarray(((norm_rast + 1) * 128).astype(np.uint8))
                         norm_rast_path = os.path.join(
                                 self.config.root_dir,
                                 f"norm_rast_{self.config.img_downscale}")
                         os.makedirs(norm_rast_path, exist_ok=True)
-                        norm_rast.save(
-                            os.path.join(
-                                norm_rast_path,
-                                fns[i].split("/")[-1][:-3] + 'png'))
+                        np.save(os.path.join(norm_rast_path, fns[i].split("/")[-1][:-3] + 'npy'), norm_rast)
 
-                    # convert depth into tensor
-                    depth_rast = TF.pil_to_tensor(depth_rast).permute(
-                        1, 2, 0) # / self.config.cam_downscale
+                        save_norm_dep_vis = True
+                        depth_rast = Image.fromarray(depth_rast)
+                        if save_norm_dep_vis:
+                            # visualize the hit distance (depth)
+                            depth_rast.save(
+                                os.path.join(depth_rast_path,
+                                    fns[i].split("/")[-1][:-3] + 'tiff'))
 
-                    depth_rast = depth_rast.to(
-                        self.rank
-                    ) if self.config.load_data_on_gpu else depth_rast.cpu()
-                    depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
-                    depth_rast_mask *= mask[..., None].to(bool)
+                            # save rasterized norm
+                            norm_rast = Image.fromarray(((norm_rast + 1) * 128).astype(np.uint8))
+                            norm_rast_path = os.path.join(
+                                    self.config.root_dir,
+                                    f"norm_rast_{self.config.img_downscale}")
+                            os.makedirs(norm_rast_path, exist_ok=True)
+                            norm_rast.save(
+                                os.path.join(
+                                    norm_rast_path,
+                                    fns[i].split("/")[-1][:-3] + 'png'))
 
+                        # convert depth into tensor
+                        depth_rast = TF.pil_to_tensor(depth_rast).permute(
+                            1, 2, 0) # / self.config.cam_downscale
+
+                        depth_rast = depth_rast.to(
+                            self.rank
+                        ) if self.config.load_data_on_gpu else depth_rast.cpu()
+                        depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
+                        depth_rast_mask *= mask[..., None].to(bool)
+
+                        all_depths.append(depth_rast) # (h, w)
+                        all_depth_masks.append(depth_rast_mask)
                     all_fg_masks.append(mask) # (h, w)
-                    all_depths.append(depth_rast) # (h, w)
-                    all_depth_masks.append(depth_rast_mask)
 
             directions = torch.stack(directions, dim=0)
             all_c2w = torch.tensor(all_c2w)[:, :3].float()
