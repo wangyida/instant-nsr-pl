@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 import math
 
+
 # get center
 def get_center(pts):
     center = pts.mean(0)
@@ -111,7 +112,7 @@ def normalize_poses(poses,
     if center_est_method == 'point':
         # rotation
         if up_est_method == 'z-axis':
-            Rc = R_z[:3, :3].T  
+            Rc = R_z[:3, :3].T
         elif up_est_method == 'no-change':
             Rc = R_z
         else:
@@ -176,7 +177,7 @@ def normalize_poses(poses,
     else:
         # rotation and translation
         if up_est_method == 'z-axis':
-            Rc = R_z[:3, :3].T  
+            Rc = R_z[:3, :3].T
         elif up_est_method == 'no-change':
             Rc = R_z
         else:
@@ -217,6 +218,7 @@ def normalize_poses(poses,
 
     return poses_norm, pts, R, t, cam_downscale
 
+
 def create_spheric_poses(cameras, n_steps=120):
     center = torch.as_tensor([0., 0., 0.],
                              dtype=cameras.dtype,
@@ -243,10 +245,12 @@ def create_spheric_poses(cameras, n_steps=120):
     return all_c2w
 
 
+# global point cloud registration
 def align_global(mesh_dir, path_pts_target):
     # ICP registration on purpose of coordinates alignment
-    pts_clt = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt.ply'))
-    
+    pts_clt = o3d.io.read_point_cloud(
+        os.path.join(mesh_dir, 'layout_depth_clt.ply'))
+
     print(colored('Fused point cloud from depth images LOADED', 'blue'))
     pts_clt_transform = o3d.geometry.PointCloud()
     # GT lidar pcd
@@ -254,22 +258,74 @@ def align_global(mesh_dir, path_pts_target):
     print(colored('Target point cloud LOADED', 'blue'))
     # global pts alignment
     threshold = 0.1
-    trans_init = np.asarray([[1., 0., 0., 0.],
-                             [0., 1., 0., 0.],
-                             [0., 0., 1., 0.], 
-                             [0., 0., 0., 1.]])
+    trans_init = np.asarray([[1., 0., 0., 0.], [0., 1., 0., 0.],
+                             [0., 0., 1., 0.], [0., 0., 0., 1.]])
     reg_p2p = o3d.pipelines.registration.registration_icp(
         pts_clt, pts_gt, threshold, trans_init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000))
     print(colored('ICP registration done', 'blue'))
-    pts_clt_transform = copy.deepcopy(pts_clt).transform(reg_p2p.transformation)
-    np.save(os.path.join(mesh_dir, 'pose_crt.npy'), np.asarray(reg_p2p.transformation))
-    o3d.io.write_point_cloud(os.path.join(mesh_dir, 'layout_depth_clt_transform.ply'), pts_clt_transform)
+    pts_clt_transform = copy.deepcopy(pts_clt).transform(
+        reg_p2p.transformation)
+    np.save(os.path.join(mesh_dir, 'pose_crt.npy'),
+            np.asarray(reg_p2p.transformation))
+    o3d.io.write_point_cloud(
+        os.path.join(mesh_dir, 'layout_depth_clt_transform.ply'),
+        pts_clt_transform)
     return np.asarray(reg_p2p.transformation)
+
 
 if __name__ == "__main__":
     root_dir = '/lpai/volumes/perception/sunhaiyang/world_model_dataset/liauto/easy_truth_240305/0501697614537981_linre_0318_6views_optim'
     mesh_dir = os.path.join(root_dir, 'meshes')
     path_pts_target = os.path.join(mesh_dir, 'dlo_map.ply')
     align_global(mesh_dir, path_pts_target)
+
+
+# parsing camera parameters from a binary file
+def bin2cams(work_space, bin_file):
+    """convert r3d bin data to camera ex/intrinsics"""
+    try:
+        import R3DParser
+        cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DParser.LoadR3DBinDataset(
+            work_space, bin_file)
+    except:
+        import R3DUtil
+        cam_intrinsics, cam_rotations, cam_centers, resolutions, fns = R3DUtil.LoadR3DBinDataset(
+            work_space, bin_file)
+    cam_intrinsics = cam_intrinsics.reshape(-1, 3, 3)
+    resolutions = resolutions.reshape(-1, 2)
+    cam_rotations = cam_rotations.reshape(-1, 3, 3)
+    cam_centers = cam_centers.reshape(-1, 3)
+    extrinsics = np.zeros((len(fns), 4, 4)).astype("float32")
+    extrinsics[:, :3, :3] = cam_rotations
+    extrinsics[:, :3, 3] = cam_centers
+    extrinsics[:, 3, 3] = 1
+
+    intrinsics = []
+    for i in range(len(fns)):
+        intrinsic = {
+            'width': 0,
+            'height': 0,
+            'f': 0,
+            'cx': 0,
+            'cy': 0,
+            'b1': 0,
+            'b2': 0,
+            'k1': 0,
+            'k2': 0,
+            'k3': 0,
+            'k4': 0,
+            'p1': 0,
+            'p2': 0,
+            'p3': 0,
+            'p4': 0,
+        }
+        cam_intrinsic = cam_intrinsics[i]
+        intrinsic["width"] = resolutions[i][0]
+        intrinsic["height"] = resolutions[i][1]
+        intrinsic["cx"] = cam_intrinsic[0, 2]  # - resolutions[i][0] / 2
+        intrinsic["cy"] = cam_intrinsic[1, 2]  # - resolutions[i][1] / 2
+        intrinsic["f"] = cam_intrinsic[0, 0]
+        intrinsics.append(copy.deepcopy(intrinsic))
+    return extrinsics, intrinsics, fns

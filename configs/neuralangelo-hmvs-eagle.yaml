@@ -5,8 +5,8 @@ seed: 42
 dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/Buildings
-  pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
-  pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply
+  pose_file: Building/Tile_+002_+002_AT.bin
+  pcd_file: Building/building_interest.ply
   mesh_outpath: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution
   cam_downscale: 200 # if false, to rescale the cameras/pts positions automatically

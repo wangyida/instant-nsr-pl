@@ -5,8 +5,8 @@ seed: 42
 dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/DJI/DJI_010
-  pose_path: /home/yidaw/Documents/datasets/DJI/DJI_010/Mesh/ATOrigin.bin
-  pcd_path: /home/yidaw/Documents/datasets/DJI/DJI_010/Mesh/TexturedModel/Tile_+000_+000_0/building_interest.ply
+  pose_file: Mesh/ATOrigin.bin
+  pcd_file: Mesh/TexturedModel/Tile_+000_+000_0/building_interest.ply
   mesh_exported_path: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution
   cam_downscale: 17 # 2.5 # if false, to rescale the cameras/pts positions automatically

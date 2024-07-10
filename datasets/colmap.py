@@ -88,6 +88,7 @@ class ColmapDatasetBase():
             all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = [], [], [], [], [], []
 
             pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/0/points3D.bin'))
+            pts3d_rgb = np.array([pts3d[k].rgb for k in pts3d])
             pts3d = np.array([pts3d[k].xyz for k in pts3d])
 
             for i, d in enumerate(imdata.values()):
@@ -100,7 +101,7 @@ class ColmapDatasetBase():
                     if not os.path.exists(img_path):
                         os.makedirs(os.path.join(self.config.root_dir, f"images_{self.config.img_downscale}"), exist_ok=True)
                         img_path = os.path.join(self.config.root_dir, 'images', d.name)
-                    img = Image.open(img_path)
+                    img = Image.open(img_path.replace('JPG','jpg'))
                     if img.size[0] != w or img.size[1] != h:
                         img = img.resize(img_wh, Image.BICUBIC)
                         img.save(os.path.join(self.config.root_dir, f"images_{self.config.img_downscale}", d.name))
@@ -135,7 +136,7 @@ class ColmapDatasetBase():
                         import open3d as o3d
                         # NOTE: save the point cloud using point cloud
                         pcd = o3d.geometry.PointCloud()
-                        mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D.obj')
+                        mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D_mesh.ply')
                         if os.path.exists(mesh_init_path):
                             mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_init_path))
                         else:
@@ -143,6 +144,7 @@ class ColmapDatasetBase():
                             os.makedirs(mesh_dir, exist_ok=True)
                             if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
                                 pcd.points = o3d.utility.Vector3dVector(pts3d)
+                                pcd.colors = o3d.utility.Vector3dVector(pts3d_rgb)
                             else:
                                 pcd = o3d.io.read_point_cloud(os.path.join(mesh_dir, 'layout_pcd_gt.ply'))
                             # pts3d = torch.from_numpy(pts3d).float()

@@ -5,7 +5,7 @@ seed: 42
 dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/Buildings
-  pose_path: /home/yidaw/Documents/datasets/Buildings/Building/Tile_+002_+002_AT.bin
+  pose_file: extrinsics.npy # Tile_+002_+002_AT.bin
   pcd_path: /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
   img_downscale: 4 # better with more than 1000 x 1000 resolution

@@ -53,8 +53,10 @@ class NeRFSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
-            depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depth_masks[index, y, x].view(-1).to(self.rank)
+            vis_mask = self.dataset.all_vis_masks[index, y, x].view(-1).to(self.rank)
+            if self.dataset.apply_depth:
+                depth = self.dataset.all_depths[index, y, x].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depth_masks[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -64,8 +66,10 @@ class NeRFSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
-            depth = self.dataset.all_depths[index].view(-1).to(self.rank)
-            depth_mask = self.dataset.all_depth_masks[index].view(-1).to(self.rank)
+            vis_mask = self.dataset.all_vis_masks[index].view(-1).to(self.rank)
+            if self.dataset.apply_depth:
+                depth = self.dataset.all_depths[index].view(-1).to(self.rank)
+                depth_mask = self.dataset.all_depth_masks[index].view(-1).to(self.rank)
         
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -86,10 +90,14 @@ class NeRFSystem(BaseSystem):
             'rays': rays,
             'rgb': rgb,
             'fg_mask': fg_mask,
-            'depth': depth,
-            'depth_mask': depth_mask,
+            'vis_mask': vis_mask,
             'camera_indices': index
         })
+        if self.dataset.apply_depth:
+            batch.update({
+                'depth': depth,
+                'depth_mask': depth_mask,
+            })      
     
     def training_step(self, batch, batch_idx):
         out = self(batch)
@@ -101,7 +109,8 @@ class NeRFSystem(BaseSystem):
             train_num_rays = int(self.train_num_rays * (self.train_num_samples / out['num_samples'].sum().item()))        
             self.train_num_rays = min(int(self.train_num_rays * 0.9 + train_num_rays * 0.1), self.config.model.max_train_num_rays)
         
-        loss_rgb = F.smooth_l1_loss(out['comp_rgb'][out['rays_valid'][...,0]], batch['rgb'][out['rays_valid'][...,0]])
+        vis_mask = batch['vis_mask'][out['rays_valid'][...,0]][...,None]
+        loss_rgb = F.smooth_l1_loss(out['comp_rgb'][out['rays_valid'][...,0]] * vis_mask, batch['rgb'][out['rays_valid'][...,0]] * vis_mask)
         self.log('train/loss_rgb', loss_rgb)
         loss += loss_rgb * self.C(self.config.system.loss.lambda_rgb)
 

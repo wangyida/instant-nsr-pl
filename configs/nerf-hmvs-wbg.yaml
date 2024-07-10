@@ -5,17 +5,23 @@ seed: 42
 dataset:
   name: hmvs
   root_dir: /home/yidaw/Documents/datasets/Buildings
+  pose_file: extrinsics.npy # Tile_+002_+002_AT.bin
+  pcd_file: pointcloud.npz # false # /home/yidaw/Documents/datasets/Buildings/Building/building_interest.ply # Bridge/Tile_+004_+008_AT.ply
   mesh_outpath: false
+  img_wh:
+    - 960
+    - 540
   img_downscale: 4 # specify training image size by either img_wh or img_downscale
-  cam_downscale: 75 # if false, to rescale the cameras/pts positions automatically
+  cam_downscale: false # 75 # if false, to rescale the cameras/pts positions automatically
   repose: true # false
   up_est_method: no-change # if true, use estimated ground plane normal direction as up direction
-  center_est_method: point # camera/point
+  center_est_method: camera # camera/point
   n_test_traj_steps: 16
   apply_mask: false
   apply_depth: false
   load_data_on_gpu: false
-  max_imgs: 400
+  max_imgs: 1200
+  preprocess_only: false
 
 model:
   name: nerf
@@ -55,7 +61,7 @@ model:
       n_neurons: 64
       n_hidden_layers: 1
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true # false
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 16
     use_distortion: false
@@ -73,7 +79,7 @@ model:
       n_neurons: 64
       n_hidden_layers: 2
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true # false
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 16
   # background model configurations
@@ -112,7 +118,7 @@ model:
       n_hidden_layers: 2
     color_activation: sigmoid
     max_imgs: ${dataset.max_imgs}
-    use_appearance_embedding: false
+    use_appearance_embedding: true # false
     use_average_appearance_embedding: ture
     appearance_embedding_dim: 8
 
