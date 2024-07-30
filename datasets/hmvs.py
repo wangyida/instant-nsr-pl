@@ -226,10 +226,10 @@ class ColmapDatasetBase():
                         os.makedirs(os.path.join(self.config.root_dir,
                                                  valid_mask_dir),
                                     exist_ok=True)
-                        vis_mask = Image.fromarray(
+                        vis_mask_pil = Image.fromarray(
                             vis_mask.cpu().detach().numpy().astype(np.uint8) *
                             255)
-                        vis_mask.save(fns[i].replace(f"{img_folder}",
+                        vis_mask_pil.save(fns[i].replace(f"{img_folder}",
                                                       f"/{valid_mask_dir}"))
 
                     depth_folder = 'lidar_depth'

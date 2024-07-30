@@ -14,6 +14,7 @@ import pytorch_lightning as pl
 import datasets
 from models.ray_utils import get_ray_directions
 from utils.misc import get_rank
+from utils.rast import rasterize
 
 
 class BlenderDatasetBase():
@@ -48,15 +49,17 @@ class BlenderDatasetBase():
         self.near, self.far = self.config.near_plane, self.config.far_plane
 
         try:
-            self.focal_x = meta['fl_x'] * self.factor
-            self.focal_y = meta['fl_y'] * self.factor
+            self.fx = meta['fl_x'] * self.factor
+            self.fy = meta['fl_y'] * self.factor
             self.cx = meta['cx'] * self.factor
             self.cy = meta['cy'] * self.factor
         except:
-            self.focal_x = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) * self.factor # scaled focal length
-            self.focal_y = self.focal_x
+            self.fx = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) * self.factor # scaled focal length
+            self.fy = self.fx
             self.cx = self.w//2 * self.factor
             self.cy = self.h//2 * self.factor
+
+        intrinsic = np.array([[self.fx, 0, self.cx],[0, self.fy, self.cy],[0, 0, 1]])
 
         try:
             self.k1 = meta['k1']
@@ -74,7 +77,7 @@ class BlenderDatasetBase():
             self.k4 = 0.0
 
         # ray directions for all pixels, same for all images (same H, W, focal)
-        self.directions = get_ray_directions(self.w, self.h, self.focal_x, self.focal_y, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).to(self.rank)
+        self.directions = get_ray_directions(self.w, self.h, self.fx, self.fy, self.cx, self.cy, k1=self.k1, k2=self.k2, k3=self.k3, k4=self.k4).to(self.rank)
         if not self.config.load_data_on_gpu: 
             self.directions = self.directions.cpu() # (h, w, 3)
 
@@ -86,7 +89,7 @@ class BlenderDatasetBase():
         for i, frame in enumerate(meta['frames']):
             c2w_npy = np.array(frame['transform_matrix'])
             # NOTE: only specific dataset, e.g. Baoru's medical images needs to convert
-            # c2w_npy[:3, 1:3] *= -1.  # COLMAP => OpenGL
+            # c2w_npy[:3, 1:3] *= -1. # COLMAP => OpenGL
             c2w = torch.from_numpy(c2w_npy[:3, :4])
             self.all_c2w.append(c2w)
 
@@ -117,10 +120,9 @@ class BlenderDatasetBase():
                 import cv2
                 if depth.max() != 0.0:
                     # depth_o3d = o3d.geometry.Image(depth.numpy() * self.config.cam_downscale)
-                    intrin_mtx =  np.array([[self.focal_x, 0, self.cx], [0, self.focal_y, self.cy], [0, 0, 1]])
                     distort = np.array([self.k1, self.k2, self.p1, self.p2, self.k3, self.k4, 0, 0])
-                    depth_o3d = o3d.geometry.Image(cv2.undistort(depth.numpy(), intrin_mtx, distort))
-                    img_o3d = o3d.geometry.Image(cv2.undistort(img.numpy(), intrin_mtx, distort))
+                    depth_o3d = o3d.geometry.Image(cv2.undistort(depth.numpy(), intrinsic, distort))
+                    img_o3d = o3d.geometry.Image(cv2.undistort(img.numpy(), intrinsic, distort))
                     rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
                         img_o3d,
                         depth_o3d,
@@ -128,7 +130,7 @@ class BlenderDatasetBase():
                         depth_scale=1,
                         convert_rgb_to_intensity=False)
                     intrin_o3d = o3d.camera.PinholeCameraIntrinsic(
-                        w, h, self.focal_x, self.focal_y, self.cx, self.cy)
+                        w, h, self.fx, self.fy, self.cx, self.cy)
                     # Open3D uses world-to-camera extrinsics
                     pts_frm = o3d.geometry.PointCloud.create_from_depth_image(
                         depth_o3d, intrinsic=intrin_o3d, extrinsic=np.linalg.inv(c2w_npy), depth_scale=1)
@@ -157,7 +159,8 @@ class BlenderDatasetBase():
                 self.all_fg_masks.append(torch.ones_like(img[...,0], device=img.device)) # (h, w)
             self.all_images.append(img[...,:3])
 
-            if self.apply_depth:
+            if self.apply_depth and 'depth_path' in frame:
+                # Using the provided depth images
                 depth_path = os.path.join(self.config.root_dir, f"{frame['depth_path']}")
                 if os.path.isfile(depth_path):
                     self.all_depths.append(depth)
@@ -176,6 +179,34 @@ class BlenderDatasetBase():
                 else:
                     depth_mask = (depth > 0.0).to(bool)
                     self.all_depth_masks.append(depth_mask)
+            elif self.apply_depth and 'depth_path' not in frame:
+                # Rasterizing depth and norms from a mesh
+                pcd = o3d.geometry.PointCloud()
+                mesh_init_path = os.path.join(self.config.root_dir, 'points3D_mesh.ply')
+                if os.path.exists(mesh_init_path):
+                    print(colored(
+                            'GT surface mesh is directly loaded',
+                            'blue'))
+                    mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_init_path))
+                depth_rast_path = os.path.join(
+                        self.config.root_dir, f'depths_{self.split}',
+                        f"rasted_{self.config.img_downscale}")
+                norm_rast_path = os.path.join(
+                        self.config.root_dir, f'normals_{self.split}',
+                        f"rasted_{self.config.img_downscale}")
+                c2w_col = c2w
+                c2w_col[:3, 1:3] *= -1. # OpenGL => COLMAP
+                depth_rast, _ = rasterize(frame['file_path'], mesh_o3d, intrinsic, c2w_col, w, h, depth_rast_path, norm_rast_path)
+                depth_rast = TF.pil_to_tensor(depth_rast).permute(
+                    1, 2, 0) / self.config.cam_downscale
+                inf_mask = (depth_rast == float("Inf"))
+                depth_rast[inf_mask] = 0
+                depth_rast = depth_rast.to(
+                    self.rank
+                ) if self.config.load_data_on_gpu else depth_rast.cpu()
+                depth_rast_mask = (depth_rast > 0.0).to(bool) # trim points outside the contraction box off
+                self.all_depths.append(depth_rast)
+                self.all_depth_masks.append(depth_rast_mask)
             else:
                 self.all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                 self.all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
@@ -188,7 +219,7 @@ class BlenderDatasetBase():
                 vis_mask = torch.ones_like(img[...,0], device=img.device)
             self.all_vis_masks.append(vis_mask)
 
-        if self.apply_depth:
+        if self.apply_depth and "depth_path" in frame:
             pts_clt = pts_clt.voxel_down_sample(voxel_size=0.5)
             pts_clt.estimate_normals(
                     search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=20))
@@ -219,7 +250,7 @@ class BlenderDatasetBase():
 
 
         # translate
-        self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
+        # self.all_c2w[...,3] -= self.all_c2w[...,3].mean(0)
 
         # rescale
         if 'cam_downscale' not in self.config:

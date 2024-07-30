@@ -16,6 +16,7 @@ from datasets.colmap_utils import \
 from models.ray_utils import get_ray_directions
 from utils.misc import get_rank
 from utils.pose_utils import get_center, normalize_poses, create_spheric_poses
+from utils.rast import rasterize
 
 class ColmapDatasetBase():
     # the data only has to be processed once
@@ -138,8 +139,17 @@ class ColmapDatasetBase():
                         pcd = o3d.geometry.PointCloud()
                         mesh_init_path = os.path.join(self.config.root_dir, 'sparse/0/points3D_mesh.ply')
                         if os.path.exists(mesh_init_path):
+                            print(colored(
+                                    'GT surface mesh is directly loaded',
+                                    'blue'))
                             mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_init_path))
                         else:
+                            print(colored(
+                                    'GT surface mesh is not provided',
+                                    'cyan'))
+                            print(colored(
+                                    'Processing with Poisson surface on top of given GT points',
+                                    'blue'))
                             mesh_dir = os.path.join(self.config.root_dir, 'meshes')
                             os.makedirs(mesh_dir, exist_ok=True)
                             if not os.path.exists(os.path.join(mesh_dir, 'layout_pcd_gt.ply')):
@@ -174,45 +184,13 @@ class ColmapDatasetBase():
                                         'blue'))
                             mesh_o3d = o3d.t.geometry.TriangleMesh.from_legacy(o3d.io.read_triangle_mesh(mesh_poisson_path))
 
-                        # Create scene and add the mesh
-                        scene = o3d.t.geometry.RaycastingScene()
-                        scene.add_triangles(mesh_o3d)
-
-                        # Rays are 6D vectors with origin and ray direction.
-                        # Here we use a helper function to create rays
-                        rays_mesh = scene.create_rays_pinhole(intrinsic_matrix=intrinsic, extrinsic_matrix=np.linalg.inv(np.concatenate((c2w.numpy(), np.array([[0, 0, 0, 1.]])))), width_px=w, height_px=h)
-
-                        # Compute the ray intersections.
-                        rays_rast = scene.cast_rays(rays_mesh)
-
-                        # visualize the hit distance (depth)
-                        # save rasterized depth
                         depth_rast_path = os.path.join(
                                 self.config.root_dir, 'depths',
                                 f"rasted_{self.config.img_downscale}")
-                        os.makedirs(depth_rast_path, exist_ok=True)
-                        np.save(os.path.join(depth_rast_path, d.name.split("/")[-1][:-3] + 'npy'), rays_rast['t_hit'].numpy())
-
-                        # save rasterized norm
                         norm_rast_path = os.path.join(
                                 self.config.root_dir, 'normals',
                                 f"rasted_{self.config.img_downscale}")
-                        os.makedirs(norm_rast_path, exist_ok=True)
-                        rays_rast['primitive_normals'].numpy()[:,:,1:3] *= -1 # OpenGL => COLMAP
-                        np.save(os.path.join(norm_rast_path, d.name.split("/")[-1][:-3] + 'npy'), rays_rast['primitive_normals'].numpy())
-                        depth_rast = Image.fromarray(rays_rast['t_hit'].numpy())
-
-                        save_norm_dep_vis = True
-                        if save_norm_dep_vis:
-                            # visualize the hit distance (depth)
-                            norm_rast = Image.fromarray(((rays_rast['primitive_normals'].numpy() + 1) * 128).astype(np.uint8))
-                            depth_rast.save(
-                                os.path.join(depth_rast_path,
-                                    d.name.split("/")[-1][:-3] + 'tiff'))
-                            norm_rast.save(
-                                os.path.join(
-                                    norm_rast_path,
-                                    d.name.split("/")[-1][:-3] + 'png'))
+                        depth_rast, _ = rasterize(d.name, mesh_o3d, intrinsic, c2w, w, h, depth_rast_path, norm_rast_path)
                         depth_rast = TF.pil_to_tensor(depth_rast).permute(
                             1, 2, 0) / self.config.cam_downscale
                         inf_mask = (depth_rast == float("Inf"))
@@ -227,6 +205,9 @@ class ColmapDatasetBase():
                         all_depths.append(torch.zeros_like(img[...,0], device=img.device))
                         all_depth_masks.append(torch.zeros_like(img[...,0], device=img.device))
 
+            if self.config.apply_depth and self.config.preprocess_only:
+                print(colored('Finish preprocessing.', 'green'))
+                exit()
             
             all_c2w, all_images, all_fg_masks, all_depths, all_depth_masks, all_vis_masks = \
                 torch.stack(all_c2w, dim=0).float(), \

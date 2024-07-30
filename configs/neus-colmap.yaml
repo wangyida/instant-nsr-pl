@@ -16,6 +16,7 @@ dataset:
   apply_depth: false
   load_data_on_gpu: false
   max_imgs: 400
+  preprocess_only: false
 
 model:
   name: neus
